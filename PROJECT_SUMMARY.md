@@ -34,11 +34,20 @@ the next step onward.)
   moment any need reaches 0 (no health system). A colored warning dot
   appears above the player for each need below 30 (hunger = orange, left;
   thirst = blue, middle; sleep = purple, right). Deaths are printed to the
-  terminal for now. Nothing restores needs yet; test durations are short
-  on purpose.
+  terminal for now. Test durations are short on purpose.
+- **Loot** (second item of the remaining build order) — food, water and
+  weapons spawn once at the start (no respawning). Players pick up items
+  they touch. Food/water go into an inventory and are used automatically
+  when hunger/thirst drops below 50, restoring 50. Weapons are carried but
+  have no effect until combat exists.
 
-Nothing beyond this (loot, AI decision-making, combat, alliances) is
+Nothing beyond this (AI decision-making, combat, alliances) is
 implemented yet.
+
+**Tuning to revisit later** — player speeds (1–3 px/frame) and need
+durations are deliberately fast so test runs are short. Lower them once
+the simulation speed control enhancement exists, so viewing speed and
+testing speed can differ.
 
 ## Architecture
 
@@ -48,9 +57,9 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`. Still needs: `strength`, inventory, alliance membership, AI state, vision radius. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`. Still needs: `strength`, alliance membership, AI state, vision radius. |
 | `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
-| `arena.py` | Empty file | Will hold arena bounds and loot spawning/tracking. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
+| `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Empty file | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Empty file | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
 | `utils.py` | Not created | Planned for shared math helpers (distance, vector normalize) so `ai.py` and `combat.py` don't duplicate logic. |
@@ -129,7 +138,7 @@ making independent decisions.
 
 1. ~~Needs — hunger/thirst/sleep decay over time; some way to visualize it
    (feeds into the visual state indicators enhancement).~~ Done.
-2. Loot — spawning and pickup in `arena.py`, weighted toward the center.
+2. ~~Loot — spawning and pickup in `arena.py`, weighted toward the center.~~ Done.
 3. AI states with real goals, including vision radius and `SEARCHING`
    (`ai.py`).
 4. Combat resolution (`combat.py`).

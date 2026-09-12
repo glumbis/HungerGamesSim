@@ -5,6 +5,7 @@ from config import (
     BACKGROUND_COLOR, NUM_PLAYERS, START_CIRCLE_RADIUS
 )
 from player import Player
+from arena import Arena
 
 
 def create_starting_players():
@@ -29,6 +30,7 @@ def main():
     clock = pygame.time.Clock()
 
     players = create_starting_players()
+    arena = Arena()
 
     running = True
     while running:
@@ -40,6 +42,7 @@ def main():
         # the frame that gets drawn shows one consistent world state.
         for player in players:
             player.move()
+            player.use_supplies()   # before needs drop, so a carried item can save them
             player.update_needs()
 
         # Remove players who died this frame. `survivors` is a new list
@@ -51,8 +54,12 @@ def main():
                       f"{len(survivors)} remaining.")
         players = survivors
 
+        # Living players pick up any loot they are touching
+        arena.handle_pickups(players)
+
         # Draw pass
         screen.fill(BACKGROUND_COLOR)
+        arena.draw(screen)      # loot first, so players are drawn on top
         for player in players:
             player.draw(screen)
         pygame.display.flip()

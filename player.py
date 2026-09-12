@@ -8,6 +8,7 @@ from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
     NEED_MAX, NEED_WARNING_THRESHOLD, NEED_SECONDS_TO_EMPTY,
     NEED_RATE_VARIATION, NEED_WARNING_COLORS,
+    LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
     WARNING_DOT_RADIUS, WARNING_DOT_SPACING, WARNING_DOT_OFFSET_Y,
 )
 
@@ -33,6 +34,10 @@ class Player:
             # Scale by a random factor, e.g. 0.75-1.25, so players differ.
             variation = random.uniform(1 - NEED_RATE_VARIATION, 1 + NEED_RATE_VARIATION)
             self.decay_rates[name] = base_rate * variation
+
+        # How many of each item the player carries, e.g.
+        # {"food": 0, "water": 0, "weapon": 0}
+        self.inventory = {kind: 0 for kind in LOOT_COUNTS}
 
     def move(self):
         # Nudge the heading slightly instead of picking a brand new
@@ -64,6 +69,18 @@ class Player:
                 self.alive = False
                 self.cause_of_death = name
                 return  # already dead, no need to check the rest
+
+    def pick_up(self, kind):
+        self.inventory[kind] += 1
+
+    def use_supplies(self):
+        """Eat or drink a carried item once its need drops below the
+        threshold. A fixed rule for now; the AI step may replace it."""
+        for kind, need in LOOT_RESTORES.items():
+            if self.inventory[kind] > 0 and self.needs[need] < LOOT_USE_THRESHOLD:
+                self.inventory[kind] -= 1
+                # min() stops the need going above the maximum
+                self.needs[need] = min(NEED_MAX, self.needs[need] + LOOT_RESTORE_AMOUNT)
 
     def draw(self, screen):
         pygame.draw.circle(

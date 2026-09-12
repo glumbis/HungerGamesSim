@@ -38,3 +38,24 @@ NEED_WARNING_COLORS = {
 WARNING_DOT_RADIUS = 2
 WARNING_DOT_SPACING = 6     # horizontal gap between warning dots
 WARNING_DOT_OFFSET_Y = 5    # extra gap between player dot and warning dots
+
+# Loot
+LOOT_COUNTS = {             # how many of each item spawn at the start
+    "food": 30,
+    "water": 30,
+    "weapon": 12,
+}
+LOOT_SPREAD = 150           # typical distance (pixels) of loot from the center;
+                            # smaller = more tightly clustered in the middle
+LOOT_SIZE = 6               # side length of the square drawn for an item
+LOOT_COLORS = {
+    "food": (230, 140, 40),     # orange, same as the hunger warning
+    "water": (60, 140, 230),    # blue, same as the thirst warning
+    "weapon": (200, 60, 60),    # red
+}
+LOOT_RESTORES = {           # which need each consumable item refills
+    "food": "hunger",
+    "water": "thirst",
+}
+LOOT_RESTORE_AMOUNT = 50    # how much one item refills its need
+LOOT_USE_THRESHOLD = 50     # a carried item is used once its need drops below this
