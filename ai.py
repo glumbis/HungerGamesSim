@@ -1,6 +1,6 @@
 """Decision-making. Every frame, decide() sets each player's `state` (what
-it is doing) and `target` (the point it is heading for, or None to wander).
-Player.move() then carries that out."""
+it is doing) and `target` (the point it is heading for, or None to stand
+still). Player.move() then carries that out."""
 import math
 import random
 
@@ -12,12 +12,15 @@ from config import (
     SEEK_THRESHOLD, REST_THRESHOLD, REST_UNTIL, LOOT_RESTORES,
     WEAPON_FEAR_FACTOR, HUNT_GIVE_UP_SECONDS, HUNT_COOLDOWN_SECONDS,
     RETREAT_DISTANCE, FOLLOW_SPREAD, FOLLOW_LEASH,
+    EXPLORE_CELL_SIZE, EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX, SHELTER_WALL_MARGIN,
+    STALK_DISTANCE,
 )
 from utils import distance, angle_to
 
 # Player states
 RUSH_LOOT = "RUSH_LOOT"         # start: aggressive players run for the central loot
 FLEE_OUTWARD = "FLEE_OUTWARD"   # start: cautious players run away from the center
+SHELTERING = "SHELTERING"       # tired: walking to a quiet spot by a wall to sleep
 RESTING = "RESTING"             # asleep: standing still, recovering sleep, sees nothing
 SEEKING = "SEEKING"             # needs food/water and can see some
 SEARCHING = "SEARCHING"         # looking for food/water, or for prey that left sight
@@ -25,12 +28,13 @@ HUNTING = "HUNTING"             # chasing a visible player to attack it
 AVOIDING = "AVOIDING"           # moving away from another player
 GATHERING = "GATHERING"         # no urgent need; collecting visible loot
 FOLLOWING = "FOLLOWING"         # alliance member staying near its leader
-WANDER = "WANDER"               # nothing to do
+EXPLORING = "EXPLORING"         # nothing urgent: heading for unvisited parts of the arena
 
 # Dot color for each state in the debug view
 STATE_COLORS = {
     RUSH_LOOT: (230, 200, 60),      # yellow
     FLEE_OUTWARD: (120, 200, 120),  # green
+    SHELTERING: (90, 150, 200),     # steel blue
     RESTING: (120, 120, 255),       # blue
     SEEKING: (240, 150, 60),        # orange
     SEARCHING: (240, 90, 220),      # pink
@@ -38,7 +42,7 @@ STATE_COLORS = {
     AVOIDING: (170, 120, 70),       # brown
     GATHERING: (80, 210, 210),      # cyan
     FOLLOWING: (200, 160, 255),     # lavender
-    WANDER: (220, 220, 220),        # white
+    EXPLORING: (220, 220, 220),     # white
 }
 
 # How a player reacts to another player it sees
@@ -77,6 +81,68 @@ def point_away_from(player, from_x, from_y):
     return x, y
 
 
+def cell_of(x, y):
+    """Which exploration cell (column, row) a point lies in. // is whole-number division."""
+    return int(x // EXPLORE_CELL_SIZE), int(y // EXPLORE_CELL_SIZE)
+
+
+def choose_explore_point(player):
+    """A random point in one of the three nearest cells this player has not
+    visited yet. Once every cell has been visited, it starts over."""
+    cols = math.ceil(SCREEN_WIDTH / EXPLORE_CELL_SIZE)
+    rows = math.ceil(SCREEN_HEIGHT / EXPLORE_CELL_SIZE)
+    unvisited = [(col, row) for col in range(cols) for row in range(rows)
+                 if (col, row) not in player.visited_cells]
+    if not unvisited:
+        player.visited_cells = {cell_of(player.x, player.y)}
+        unvisited = [(col, row) for col in range(cols) for row in range(rows)
+                     if (col, row) not in player.visited_cells]
+
+    def distance_to_cell(cell):
+        col, row = cell
+        center_x = (col + 0.5) * EXPLORE_CELL_SIZE
+        center_y = (row + 0.5) * EXPLORE_CELL_SIZE
+        return distance(player.x, player.y, center_x, center_y)
+
+    unvisited.sort(key=distance_to_cell)  # nearest cells first
+    col, row = random.choice(unvisited[:3])
+    x = random.uniform(col * EXPLORE_CELL_SIZE, (col + 1) * EXPLORE_CELL_SIZE)
+    y = random.uniform(row * EXPLORE_CELL_SIZE, (row + 1) * EXPLORE_CELL_SIZE)
+    return clamp_to_arena(x, y, FLEE_EDGE_MARGIN)
+
+
+def explore(player):
+    """Walk to a part of the arena this player hasn't visited, pause on
+    arrival to look around, then pick the next one."""
+    set_state(player, EXPLORING)
+    if player.pause_timer > 0:
+        player.pause_timer -= 1
+        player.target = None  # stand still while looking around
+        return
+    if player.explore_point is not None and \
+            distance(player.x, player.y, *player.explore_point) < ARRIVE_DISTANCE:
+        player.explore_point = None
+        player.pause_timer = int(random.uniform(EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX) * FPS)
+        player.target = None
+        return
+    if player.explore_point is None:
+        player.explore_point = choose_explore_point(player)
+    player.target = player.explore_point
+
+
+def shelter_spot(player):
+    """A spot SHELTER_WALL_MARGIN from the wall nearest to the player, away
+    from the busy center. Each option is (distance to that wall, spot)."""
+    options = [
+        (player.x, (SHELTER_WALL_MARGIN, player.y)),                                  # left
+        (SCREEN_WIDTH - player.x, (SCREEN_WIDTH - SHELTER_WALL_MARGIN, player.y)),    # right
+        (player.y, (player.x, SHELTER_WALL_MARGIN)),                                  # top
+        (SCREEN_HEIGHT - player.y, (player.x, SCREEN_HEIGHT - SHELTER_WALL_MARGIN)),  # bottom
+    ]
+    closest = min(options, key=lambda option: option[0])
+    return closest[1]
+
+
 def choose_opening_state(player, arena):
     """At the start, a player either rushes the center or flees outward.
     The higher its aggression (0-1), the more likely it rushes."""
@@ -98,6 +164,8 @@ def look_around(player, arena, players):
     """Update the player's memory from what it can see, and store the loot
     items and non-allied living players currently in sight on the player
     (as visible_loot and visible_players)."""
+    player.visited_cells.add(cell_of(player.x, player.y))
+
     visible_loot = []
     for item in arena.loot:
         if item.dropped_by is player:
@@ -209,6 +277,15 @@ def stop_hunting(player, cooldown=False):
         player.hunt_cooldown = HUNT_COOLDOWN_SECONDS * FPS
 
 
+def chase_target(player, prey):
+    """Where a hunter heads. Prey that has only just fought can't be attacked
+    yet, so the hunter waits close by (None = stand still) instead of
+    standing right on top of it."""
+    if prey.retreat_timer > 0 and distance(player.x, player.y, prey.x, prey.y) < STALK_DISTANCE:
+        return None
+    return (prey.x, prey.y)
+
+
 def hunt(player, visible_players):
     """Chase the current prey. Returns True if still hunting this frame."""
     prey = player.prey
@@ -224,7 +301,7 @@ def hunt(player, visible_players):
     if prey in visible_players:
         player.prey_last_seen = (prey.x, prey.y)
         set_state(player, HUNTING)
-        player.target = (prey.x, prey.y)
+        player.target = chase_target(player, prey)
         return True
 
     # Prey is out of sight: go to where it was last seen. (A player that
@@ -257,6 +334,17 @@ def react_to_players(player, visible_players, need):
         elif other.state == RESTING:
             player.reactions[other] = FIGHT  # fell asleep in sight: attack
 
+    # An alliance defends its members: anyone in sight who is hunting one of
+    # them becomes the group's target, even during a hunt cooldown
+    if player.alliance is not None and player.prey is None:
+        attackers = [other for other in visible_players
+                     if other.prey is not None and other.prey.alliance is player.alliance]
+        attacker = nearest(player, attackers)
+        if attacker:
+            player.reactions[attacker] = FIGHT
+            player.prey = attacker
+            player.hunt_timer = 0
+
     # Continue an ongoing hunt. If the prey is out of sight and there is an
     # urgent need, the need wins and the hunt is dropped.
     if player.prey is not None:
@@ -288,18 +376,18 @@ def react_to_players(player, visible_players, need):
 
 def follow_leader(player):
     """Alliance members don't make their own plans: they join the leader's
-    hunts, sleep when it sleeps, and otherwise stay loosely near it."""
+    hunts, sleep when it sleeps, and otherwise stay close to it."""
     leader = player.alliance.leader
 
-    # Join the leader's hunt
-    if leader.prey is not None and leader.prey.alive:
+    # Join the leader's hunt — only while the leader is actually chasing,
+    # not while the group is backing off or searching
+    if leader.state == HUNTING and leader.prey is not None and leader.prey.alive \
+            and leader.prey in player.visible_players:
         player.prey = leader.prey
-        if player.prey in player.visible_players:
-            set_state(player, HUNTING)
-            player.target = (player.prey.x, player.prey.y)
-            return
-    else:
-        player.prey = None
+        set_state(player, HUNTING)
+        player.target = chase_target(player, leader.prey)
+        return
+    player.prey = None
 
     to_leader = distance(player.x, player.y, leader.x, leader.y)
 
@@ -309,8 +397,8 @@ def follow_leader(player):
         player.target = None
         return
 
-    # Collect loot close to the leader
-    if leader.state != RESTING:
+    # Collect loot close to the leader, unless the group is busy
+    if leader.state not in (RESTING, SHELTERING, HUNTING, AVOIDING):
         wanted = [item for item in player.visible_loot
                   if player.can_carry(item.kind)
                   and distance(item.x, item.y, leader.x, leader.y) <= FOLLOW_LEASH]
@@ -320,14 +408,21 @@ def follow_leader(player):
             player.target = (item.x, item.y)
             return
 
-    # Otherwise head for the member's own spot near the leader, and pick a
-    # new spot on arrival so the group keeps shifting a little
+    # Otherwise keep to the member's own spot next to the leader
+    set_state(player, FOLLOWING)
     offset_x, offset_y = player.follow_offset
     spot = clamp_to_arena(leader.x + offset_x, leader.y + offset_y, ARRIVE_DISTANCE)
-    if distance(player.x, player.y, *spot) < ARRIVE_DISTANCE:
+    if distance(player.x, player.y, *spot) >= ARRIVE_DISTANCE:
+        player.target = spot
+        return
+
+    # At its spot: stand still for a moment, then pick a new spot nearby
+    if player.pause_timer == 0:
+        player.pause_timer = int(random.uniform(EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX) * FPS)
+    player.pause_timer -= 1
+    if player.pause_timer == 0:
         player.follow_offset = alliances.random_follow_offset()
-    set_state(player, FOLLOWING)
-    player.target = spot
+    player.target = None
 
 
 def decide(player, arena, players):
@@ -354,16 +449,20 @@ def decide(player, arena, players):
             return  # still on the way to the flee point
         # Arrived at the flee point: fall through to the normal decisions below.
 
-    # 2. Just fought and both survived: back away from the opponent
+    is_member = player.alliance is not None and player.alliance.leader is not player
+
+    # 2. Just fought and both survived: back away from the opponent.
+    #    (Alliance members stay with their group instead.)
     if player.retreat_timer > 0:
         player.retreat_timer -= 1
-        opponent = player.retreat_from
-        set_state(player, AVOIDING)
-        player.target = point_away_from(player, opponent.x, opponent.y)
-        return
+        if not is_member:
+            opponent = player.retreat_from
+            set_state(player, AVOIDING)
+            player.target = point_away_from(player, opponent.x, opponent.y)
+            return
 
     # 3. Alliance members follow their leader instead of deciding for themselves
-    if player.alliance is not None and player.alliance.leader is not player:
+    if is_member:
         follow_leader(player)
         return
 
@@ -378,6 +477,8 @@ def decide(player, arena, players):
 
     need = most_urgent_need(members, player.state == RESTING)
     asleep = player.state == RESTING and need == "sleep"
+    if need != "sleep":
+        player.rest_spot = None  # not tired (any more): forget the sleeping spot
 
     # 4. Players in sight are allied with, fought or avoided
     #    (a sleeping player sees nothing)
@@ -386,6 +487,14 @@ def decide(player, arena, players):
 
     # 5. Urgent needs
     if need == "sleep":
+        if player.state != RESTING:
+            # Walk to a quiet spot by a wall first, then lie down there
+            if player.rest_spot is None:
+                player.rest_spot = shelter_spot(player)
+            if distance(player.x, player.y, *player.rest_spot) > ARRIVE_DISTANCE:
+                set_state(player, SHELTERING)
+                player.target = player.rest_spot
+                return
         set_state(player, RESTING)
         player.target = None
         return
@@ -404,10 +513,10 @@ def decide(player, arena, players):
             item = nearest(player, remembered)
             player.target = (item.x, item.y)
         else:
-            # Nothing known: explore by walking to random points
+            # Nothing known: search parts of the arena not visited yet
             if player.search_point is None or distance(
                     player.x, player.y, *player.search_point) < ARRIVE_DISTANCE:
-                player.search_point = arena.random_point(ARRIVE_DISTANCE)
+                player.search_point = choose_explore_point(player)
             player.target = player.search_point
         return
 
@@ -419,6 +528,5 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 7. Nothing to do
-    set_state(player, WANDER)
-    player.target = None
+    # 7. Nothing urgent: explore
+    explore(player)

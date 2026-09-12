@@ -3,6 +3,7 @@ import pygame
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
     BACKGROUND_COLOR, NUM_PLAYERS, START_CIRCLE_RADIUS, LEGEND_TEXT_COLOR,
+    CHASE_LINE_COLOR,
 )
 from player import Player
 from arena import Arena
@@ -111,6 +112,12 @@ def main():
                                      (int(player.x), int(player.y)),
                                      (int(leader.x), int(leader.y)))
         arena.draw(screen)      # loot and fight markers before players, so players are on top
+        # Faint line from each hunter to the player it is chasing
+        for player in players:
+            if player.state == ai.HUNTING and player.prey is not None and player.prey.alive:
+                pygame.draw.line(screen, CHASE_LINE_COLOR,
+                                 (int(player.x), int(player.y)),
+                                 (int(player.prey.x), int(player.prey.y)))
         for player in players:
             player.draw(screen, debug)
         if debug:

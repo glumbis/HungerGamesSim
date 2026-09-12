@@ -50,7 +50,8 @@ the next step onward.)
   `SEEKING` visible food/water when hunger/thirst < 40 and none is carried;
   otherwise `SEARCHING` remembered items or random points — if several are
   urgent, the lowest value wins. With no urgent need: `GATHERING` visible
-  loot within carry limits (3 food, 3 water, 1 weapon), else `WANDER`.
+  loot within carry limits (3 food, 3 water, 1 weapon), else wander
+  (since replaced by `EXPLORING`, see below).
   Players see 80 px (originally 120) and remember loot they have seen; they only learn an
   item is gone when they see its spot again. Steering turns at most
   0.2 rad/frame and faces the target directly within 30 px. Press **D** for
@@ -87,15 +88,35 @@ the next step onward.)
   strongest member leads (re-chosen if the leader dies). The leader decides
   using the group's combined vision and memory and the group's needs (rest
   if anyone's sleep is low; seek food/water if anyone is low and nobody
-  carries it). Members follow loosely (own spot within ~30 px, loot within
-  70 px of the leader), join the leader's hunts and sleep beside it. Allies
-  within 40 px share food/water and add 30% of their strength in fights.
-  A leader moves at its slowest member's speed (half that while a member
-  is more than 70 px away). Betrayal: 0.3 per minute × aggression; the
+  carries it). Members follow the leader (distances since tightened, see
+  "Alliance unity" below), join the leader's hunts and sleep beside it.
+  Allies within 40 px share food/water. A leader moves at its slowest
+  member's speed (half that while calm and a member is more than 45 px
+  away). Betrayal: 0.3 per minute × aggression; the
   betrayer attacks the nearest former ally. An alliance breaks up below 2
   members, or when only its members are left. Normal view: members in the
   alliance color, leader with a white ring. Debug view: member-to-leader
   lines and the `FOLLOWING` state. Events are printed to the terminal.
+
+- **Alliance unity and movement style** (refinement after alliances) —
+  members keep ~16 px from their leader and gather loot only within 45 px
+  of it; following members match the leader's sprint speed. If any member
+  fights and survives, the whole group backs off for 3 s behind its leader
+  (waking a sleeping group), after which the leader resumes the chase
+  against that opponent. Anyone seen hunting a member becomes the group's
+  target. Members join a chase only while the leader is actively hunting.
+  Hunters wait 20 px from prey that cannot be attacked yet instead of
+  standing on it. Allies within 60 px add 50% of their strength in fights.
+  Idle players are `EXPLORING`: they walk to one of the nearest unvisited
+  150 px cells and pause 0.5–2 s on arrival (searching for food/water also
+  uses unvisited cells). The random-walk `WANDER` state is gone; a player
+  without a target stands still. Speed multipliers by state: hunting and
+  avoiding 1.5×, rush and flee 1.3×, seeking 1.2×, everything else 1.0×.
+  Tired players first walk to a spot 40 px from the nearest wall
+  (`SHELTERING`), then rest. A faint red line joins each hunter to its prey
+  in both views. Measured over 5 seeds: member–leader distance median
+  14–15 px; 45–64 fights per run, 66–85% with ally support; combat causes
+  ~30% of deaths, thirst ~50%.
 
 Nothing beyond this (remaining enhancements) is implemented yet.
 
@@ -206,6 +227,20 @@ making independent decisions.
 
 Each step has been built and confirmed visually before moving to the next —
 that pattern should continue.
+
+## Requested changes for next session
+
+Feedback on the alliance unity / movement version (not yet implemented):
+
+1. **Fewer alliances** — alliances form too often.
+2. **More aggressive alliances** — groups should pick fights more readily.
+3. **Deadlier fights** — more fights should end in elimination.
+4. **No ignoring between nearby alliances** — alliances are sometimes
+   close to each other but ignore each other. Remove this: nearby
+   alliances must fight or avoid.
+5. **Hunting beyond vision** — alliances should be able to move in the
+   general direction of players to hunt, even when those players are
+   outside their vision radius.
 
 ## Working style
 

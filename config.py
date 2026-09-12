@@ -79,6 +79,22 @@ REST_THRESHOLD = 35         # sleep below this -> rest
 REST_UNTIL = 90             # a resting player gets up once sleep reaches this
 REST_SECONDS_TO_FULL = 15   # seconds of rest to recover sleep from 0 to 100
 
+# Movement style
+EXPLORE_CELL_SIZE = 150     # the arena is split into cells this size; players explore unvisited ones
+EXPLORE_PAUSE_MIN = 0.5     # seconds a player pauses to look around on reaching a point
+EXPLORE_PAUSE_MAX = 2.0
+SHELTER_WALL_MARGIN = 40    # tired players walk to a spot this far from the nearest wall to sleep
+# Speed multiplier per state (any state not listed moves at 1.0). Urgent
+# states are faster, so chases and escapes stand out from calm movement.
+STATE_SPEED_MULTIPLIERS = {
+    "HUNTING": 1.5,
+    "AVOIDING": 1.5,
+    "RUSH_LOOT": 1.3,
+    "FLEE_OUTWARD": 1.3,
+    "SEEKING": 1.2,
+}
+CHASE_LINE_COLOR = (130, 45, 45)  # faint line from a hunter to its prey
+
 # Debug view (toggle with the D key)
 VISION_CIRCLE_COLOR = (55, 55, 55)
 LEGEND_TEXT_COLOR = (200, 200, 200)
@@ -88,6 +104,7 @@ STRENGTH_MIN = 1            # weakest possible player
 STRENGTH_MAX = 10           # strongest possible player
 WEAPON_STRENGTH_BONUS = 5   # added to strength while carrying a weapon
 COMBAT_RANGE = 10           # a hunter this close to its prey starts a fight
+STALK_DISTANCE = 20         # hunters wait this far from prey that can't be attacked yet
 OUTCOME_WEIGHTS = {         # relative chance of each kind of fight outcome
     "ELIMINATION": 0.6,     # loser is eliminated, unless it escapes (then drops items)
     "STANDOFF": 0.2,        # nobody hurt, both back off
@@ -112,11 +129,11 @@ HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this 
 # Alliances
 ALLIANCE_CHANCE = 0.6       # chance to ally = this x (1 - aggression) of each side
 ALLIANCE_MAX_SIZE = 4       # most members an alliance can have
-ALLY_STRENGTH_SHARE = 0.3   # share of a nearby ally's strength added in a fight
-ALLY_SUPPORT_RANGE = 40     # allies this close help in a fight
+ALLY_STRENGTH_SHARE = 0.5   # share of a nearby ally's strength added in a fight
+ALLY_SUPPORT_RANGE = 60     # allies this close help in a fight
 ALLY_SHARE_RANGE = 40       # allies this close hand over food/water
-FOLLOW_SPREAD = 30          # members stay within about this distance of their leader
-FOLLOW_LEASH = 70           # members collect loot at most this far from their leader
+FOLLOW_SPREAD = 16          # members stay within about this distance of their leader
+FOLLOW_LEASH = 45           # members collect loot at most this far from their leader
 BETRAYAL_CHANCE_PER_MINUTE = 0.3  # for a member with aggression 1 (scaled by aggression)
 ALLIANCE_COLORS = [         # each new alliance takes the next color
     (255, 120, 120),

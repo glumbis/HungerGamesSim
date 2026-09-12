@@ -92,11 +92,25 @@ def fight(attacker, defender, arena):
 
 
 def retreat(player, opponent):
-    """Make a player back away from its opponent for a while. It can't
-    fight during this time, and won't start hunting again straight away."""
+    """Make a player back off from its opponent for a while; it can't fight
+    during this time.
+    - A player on its own also won't start a new hunt straight away.
+    - In an alliance the whole group backs off together (members follow
+      their leader), and then goes after the opponent: the leader keeps it
+      as prey, and resumes the chase once the back-off is over."""
     player.retreat_timer = RETREAT_SECONDS * FPS
     player.retreat_from = opponent
-    stop_hunting(player, cooldown=True)
+    if player.alliance is None:
+        stop_hunting(player, cooldown=True)
+        return
+
+    stop_hunting(player)
+    leader = player.alliance.leader
+    leader.retreat_timer = max(leader.retreat_timer, RETREAT_SECONDS * FPS)
+    leader.retreat_from = opponent
+    leader.prey = opponent
+    leader.prey_last_seen = (opponent.x, opponent.y)
+    leader.hunt_timer = 0
 
 
 def drop_items(player, arena, fraction):

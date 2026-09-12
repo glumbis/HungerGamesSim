@@ -13,9 +13,9 @@ from config import (
     LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
     CARRY_LIMITS, VISION_RADIUS, VISION_CIRCLE_COLOR, REST_SECONDS_TO_FULL,
     LOOT_COLORS, STRENGTH_MIN, STRENGTH_MAX,
-    WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH,
+    WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH, STATE_SPEED_MULTIPLIERS,
 )
-from ai import RESTING, STATE_COLORS
+from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
 
 # How much sleep a resting player regains per frame
@@ -52,8 +52,12 @@ class Player:
         self.aggression = random.random()  # 0 = very cautious, 1 = very aggressive
         self.state = None           # what the player is doing, e.g. "RESTING"
         self.state_timer = 0        # frames spent in the current state
-        self.target = None          # (x, y) to head for, or None to wander
-        self.search_point = None    # current exploration point when searching
+        self.target = None          # (x, y) to head for, or None to stand still
+        self.search_point = None    # current point to search when looking for food/water
+        self.explore_point = None   # current point to explore when nothing is urgent
+        self.visited_cells = set()  # arena cells (column, row) this player has been in
+        self.pause_timer = 0        # frames left standing still to look around
+        self.rest_spot = None       # (x, y) by a wall where it intends to sleep
         self.known_loot = set()     # loot items this player has seen
         self.reactions = {}         # other player in sight -> "fight" or "avoid"
         self.prey = None            # the player being hunted, if any
@@ -84,42 +88,52 @@ class Player:
         return self.strength + bonus
 
     def current_speed(self):
-        """A leader moves no faster than its slowest member, and at half that
-        speed while a member has fallen behind, so the group stays together."""
-        if self.alliance is None or self.alliance.leader is not self:
-            return self.speed
+        """How fast the player moves this frame.
+        - Urgent states (hunting, avoiding, ...) are faster; see
+          STATE_SPEED_MULTIPLIERS. .get(state, 1.0) means "1.0 if not listed".
+        - A following member speeds up when its leader does.
+        - A leader moves no faster than its slowest member, and at half that
+          while calm and a member has fallen behind, so the group stays together."""
+        multiplier = STATE_SPEED_MULTIPLIERS.get(self.state, 1.0)
+        if self.alliance is None:
+            return self.speed * multiplier
+
+        leader = self.alliance.leader
+        if leader is not self:
+            if self.state == FOLLOWING:
+                multiplier = max(multiplier, STATE_SPEED_MULTIPLIERS.get(leader.state, 1.0))
+            return self.speed * multiplier
+
         members = self.alliance.members
         slowest = min(member.speed for member in members)
         straggling = any(
             distance(self.x, self.y, member.x, member.y) > FOLLOW_LEASH for member in members
         )
-        return slowest * 0.5 if straggling else slowest
+        if straggling and self.state not in (HUNTING, AVOIDING):
+            multiplier *= 0.5
+        return slowest * multiplier
 
     def move(self):
         if self.state == RESTING:
             return  # resting players stand still
 
-        step = self.current_speed()
         if self.target is None:
-            # Wander: nudge the heading slightly instead of picking a brand
-            # new random direction each frame — this is what makes the path
-            # look like organic wandering rather than jittery noise.
-            self.heading += random.uniform(-WANDER_TURN_RATE, WANDER_TURN_RATE)
+            return  # no target: stand still (e.g. pausing to look around)
+
+        target_x, target_y = self.target
+        dist = distance(self.x, self.y, target_x, target_y)
+        desired = angle_to(self.x, self.y, target_x, target_y)
+        if dist < STEER_SNAP_DISTANCE:
+            # Close to the target: face it directly. With a limited turn
+            # rate a player could otherwise circle around it forever.
+            self.heading = desired
         else:
-            target_x, target_y = self.target
-            dist = distance(self.x, self.y, target_x, target_y)
-            desired = angle_to(self.x, self.y, target_x, target_y)
-            if dist < STEER_SNAP_DISTANCE:
-                # Close to the target: face it directly. With a limited turn
-                # rate a player could otherwise circle around it forever.
-                self.heading = desired
-            else:
-                # Turn toward the target, but no faster than STEER_TURN_RATE,
-                # plus a little random drift so movement still looks organic.
-                turn = angle_difference(self.heading, desired)
-                turn = max(-STEER_TURN_RATE, min(turn, STEER_TURN_RATE))
-                self.heading += turn + random.uniform(-WANDER_TURN_RATE / 3, WANDER_TURN_RATE / 3)
-            step = min(step, dist)  # don't overshoot the target
+            # Turn toward the target, but no faster than STEER_TURN_RATE,
+            # plus a little random drift so movement still looks organic.
+            turn = angle_difference(self.heading, desired)
+            turn = max(-STEER_TURN_RATE, min(turn, STEER_TURN_RATE))
+            self.heading += turn + random.uniform(-WANDER_TURN_RATE / 3, WANDER_TURN_RATE / 3)
+        step = min(self.current_speed(), dist)  # don't overshoot the target
 
         # Keep the heading between 0 and 2*pi so it never grows without limit
         self.heading %= 2 * math.pi
