@@ -41,7 +41,25 @@ the next step onward.)
   when hunger/thirst drops below 50, restoring 50. Weapons are carried but
   have no effect until combat exists.
 
-Nothing beyond this (AI decision-making, combat, alliances) is
+- **AI states, vision and searching** (third item) — see `ai.py`. At the
+  start each player rushes the center (`RUSH_LOOT`) or flees outward
+  (`FLEE_OUTWARD`), biased by a random `aggression` (0–1). Rushing ends once
+  the center is in sight with nothing left to grab; fleeing ends on reaching
+  a point 280 px from the center (kept 60 px from walls). After that, each
+  frame: urgent needs first — `RESTING` when sleep < 35 (until 90);
+  `SEEKING` visible food/water when hunger/thirst < 40 and none is carried;
+  otherwise `SEARCHING` remembered items or random points — if several are
+  urgent, the lowest value wins. With no urgent need: `GATHERING` visible
+  loot within carry limits (3 food, 3 water, 1 weapon), else `WANDER`.
+  Players see 120 px and remember loot they have seen; they only learn an
+  item is gone when they see its spot again. Steering turns at most
+  0.2 rad/frame and faces the target directly within 30 px. Press **D** for
+  the debug view (vision circles, state-colored dots, legend).
+  Loot layout: half of each type in a tight central cluster, the rest
+  spread evenly via a jittered grid. Player and loot size reduced to 4 px
+  so the arena reads larger.
+
+Nothing beyond this (combat, `HUNTING`/`AVOIDING`, alliances) is
 implemented yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
@@ -57,12 +75,12 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`. Still needs: `strength`, alliance membership, AI state, vision radius. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`. Still needs: `strength`, alliance membership. |
 | `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
 | `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
-| `ai.py` | Empty file | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
+| `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Empty file | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
-| `utils.py` | Not created | Planned for shared math helpers (distance, vector normalize) so `ai.py` and `combat.py` don't duplicate logic. |
+| `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
 
@@ -81,7 +99,8 @@ players, so interactions never leave a frame half-updated on screen.
 defaults to 3.14, which has no pygame. VS Code is pointed at 3.12 in
 `.vscode/settings.json`.
 
-**Planned AI state machine** (not yet implemented) — each player gets a
+**AI state machine** (implemented in `ai.py`, except `HUNTING` and
+`AVOIDING`, which arrive with combat) — each player gets a
 `state` (e.g. `RUSH_LOOT`, `FLEE_OUTWARD`, `SEEK_WATER`, `HUNTING`,
 `SEARCHING`, `RESTING`, `AVOIDING`) that determines their current movement
 target. A personality trait (e.g. aggression) assigned at spawn biases the
@@ -90,8 +109,7 @@ threshold should override whatever state a player is in. Alliance
 formation/betrayal decisions live in this layer — `combat.py` only needs to
 know two players are currently allied, it doesn't decide alliances.
 
-**Vision and the "searching" state** (agreed this session, not yet
-implemented) — each player has a vision radius; the AI only reacts to threats
+**Vision and the "searching" state** (implemented) — each player has a vision radius; the AI only reacts to threats
 or loot within it, which is what enforces imperfect information about other
 players' locations. A dedicated `SEARCHING` state handles the case where a
 player has a reason to look for something (an enemy last seen nearby, hunger
@@ -139,8 +157,8 @@ making independent decisions.
 1. ~~Needs — hunger/thirst/sleep decay over time; some way to visualize it
    (feeds into the visual state indicators enhancement).~~ Done.
 2. ~~Loot — spawning and pickup in `arena.py`, weighted toward the center.~~ Done.
-3. AI states with real goals, including vision radius and `SEARCHING`
-   (`ai.py`).
+3. ~~AI states with real goals, including vision radius and `SEARCHING`
+   (`ai.py`).~~ Done (`HUNTING`/`AVOIDING` moved to step 4).
 4. Combat resolution (`combat.py`).
 5. Alliances, layered on top of AI and combat. Leader-based — see
    "Planned alliance structure" above.

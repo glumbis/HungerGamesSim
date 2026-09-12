@@ -5,12 +5,19 @@ import pygame
 from config import (
     PLAYER_RADIUS, PLAYER_COLOR,
     PLAYER_MIN_SPEED, PLAYER_MAX_SPEED, WANDER_TURN_RATE,
+    STEER_TURN_RATE, STEER_SNAP_DISTANCE,
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
     NEED_MAX, NEED_WARNING_THRESHOLD, NEED_SECONDS_TO_EMPTY,
     NEED_RATE_VARIATION, NEED_WARNING_COLORS,
-    LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
     WARNING_DOT_RADIUS, WARNING_DOT_SPACING, WARNING_DOT_OFFSET_Y,
+    LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
+    CARRY_LIMITS, VISION_RADIUS, VISION_CIRCLE_COLOR, REST_SECONDS_TO_FULL,
 )
+from ai import RESTING, STATE_COLORS
+from utils import distance, angle_to, angle_difference
+
+# How much sleep a resting player regains per frame
+REST_RATE = NEED_MAX / (REST_SECONDS_TO_FULL * FPS)
 
 
 class Player:
@@ -39,17 +46,48 @@ class Player:
         # {"food": 0, "water": 0, "weapon": 0}
         self.inventory = {kind: 0 for kind in LOOT_COUNTS}
 
+        # AI (set and used by ai.py)
+        self.aggression = random.random()  # 0 = very cautious, 1 = very aggressive
+        self.state = None           # what the player is doing, e.g. "RESTING"
+        self.state_timer = 0        # frames spent in the current state
+        self.target = None          # (x, y) to head for, or None to wander
+        self.search_point = None    # current exploration point when searching
+        self.known_loot = set()     # loot items this player has seen
+
+    def can_carry(self, kind):
+        return self.inventory[kind] < CARRY_LIMITS[kind]
+
     def move(self):
-        # Nudge the heading slightly instead of picking a brand new
-        # random direction each frame — this is what makes the path
-        # look like organic wandering rather than jittery noise.
-        self.heading += random.uniform(-WANDER_TURN_RATE, WANDER_TURN_RATE)
-        # Keep the heading between 0 and 2*pi so it never grows without
-        # limit. This matters later when comparing it to a target angle.
+        if self.state == RESTING:
+            return  # resting players stand still
+
+        step = self.speed
+        if self.target is None:
+            # Wander: nudge the heading slightly instead of picking a brand
+            # new random direction each frame — this is what makes the path
+            # look like organic wandering rather than jittery noise.
+            self.heading += random.uniform(-WANDER_TURN_RATE, WANDER_TURN_RATE)
+        else:
+            target_x, target_y = self.target
+            dist = distance(self.x, self.y, target_x, target_y)
+            desired = angle_to(self.x, self.y, target_x, target_y)
+            if dist < STEER_SNAP_DISTANCE:
+                # Close to the target: face it directly. With a limited turn
+                # rate a player could otherwise circle around it forever.
+                self.heading = desired
+            else:
+                # Turn toward the target, but no faster than STEER_TURN_RATE,
+                # plus a little random drift so movement still looks organic.
+                turn = angle_difference(self.heading, desired)
+                turn = max(-STEER_TURN_RATE, min(turn, STEER_TURN_RATE))
+                self.heading += turn + random.uniform(-WANDER_TURN_RATE / 3, WANDER_TURN_RATE / 3)
+            step = min(self.speed, dist)  # don't overshoot the target
+
+        # Keep the heading between 0 and 2*pi so it never grows without limit
         self.heading %= 2 * math.pi
 
-        self.x += math.cos(self.heading) * self.speed
-        self.y += math.sin(self.heading) * self.speed
+        self.x += math.cos(self.heading) * step
+        self.y += math.sin(self.heading) * step
 
         # Bounce off the arena walls by reflecting the heading
         if self.x < PLAYER_RADIUS or self.x > SCREEN_WIDTH - PLAYER_RADIUS:
@@ -60,9 +98,13 @@ class Player:
             self.y = max(PLAYER_RADIUS, min(self.y, SCREEN_HEIGHT - PLAYER_RADIUS))
 
     def update_needs(self):
-        """Lower every need by this player's decay rate. The player dies
-        the moment any need reaches 0."""
+        """Lower every need by this player's decay rate (sleep recovers
+        instead while resting). The player dies the moment any need
+        reaches 0."""
         for name in self.needs:
+            if name == "sleep" and self.state == RESTING:
+                self.needs[name] = min(NEED_MAX, self.needs[name] + REST_RATE)
+                continue  # skip the decay below for this need
             self.needs[name] -= self.decay_rates[name]
             if self.needs[name] <= 0:
                 self.needs[name] = 0
@@ -75,17 +117,23 @@ class Player:
 
     def use_supplies(self):
         """Eat or drink a carried item once its need drops below the
-        threshold. A fixed rule for now; the AI step may replace it."""
+        threshold."""
         for kind, need in LOOT_RESTORES.items():
             if self.inventory[kind] > 0 and self.needs[need] < LOOT_USE_THRESHOLD:
                 self.inventory[kind] -= 1
                 # min() stops the need going above the maximum
                 self.needs[need] = min(NEED_MAX, self.needs[need] + LOOT_RESTORE_AMOUNT)
 
-    def draw(self, screen):
+    def draw_vision(self, screen):
+        """Debug view: outline of how far this player can see."""
         pygame.draw.circle(
-            screen, PLAYER_COLOR, (int(self.x), int(self.y)), PLAYER_RADIUS
+            screen, VISION_CIRCLE_COLOR, (int(self.x), int(self.y)), VISION_RADIUS, 1
         )
+
+    def draw(self, screen, debug=False):
+        # In the debug view the dot is colored by state
+        color = STATE_COLORS[self.state] if debug else PLAYER_COLOR
+        pygame.draw.circle(screen, color, (int(self.x), int(self.y)), PLAYER_RADIUS)
         self.draw_warnings(screen)
 
     def draw_warnings(self, screen):
