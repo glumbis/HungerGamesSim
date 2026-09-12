@@ -28,7 +28,16 @@ the next step onward.)
   smooth wander instead of jitter. Speed is randomized per player. Players
   bounce off the window edges by reflecting their heading.
 
-Nothing beyond this (needs, loot, AI decision-making, combat, alliances) is
+- **Needs** (first item of the remaining build order) — hunger, thirst and
+  sleep run from 100 to 0. Each player's drain rate is the base rate from
+  `NEED_SECONDS_TO_EMPTY` scaled by a random ±25% factor. A player dies the
+  moment any need reaches 0 (no health system). A colored warning dot
+  appears above the player for each need below 30 (hunger = orange, left;
+  thirst = blue, middle; sleep = purple, right). Deaths are printed to the
+  terminal for now. Nothing restores needs yet; test durations are short
+  on purpose.
+
+Nothing beyond this (loot, AI decision-making, combat, alliances) is
 implemented yet.
 
 ## Architecture
@@ -39,7 +48,7 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `move()`, `draw()`. Still needs: `strength`, needs (hunger/thirst/sleep), inventory, alliance membership, AI state, vision radius. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`. Still needs: `strength`, inventory, alliance membership, AI state, vision radius. |
 | `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
 | `arena.py` | Empty file | Will hold arena bounds and loot spawning/tracking. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Empty file | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
@@ -81,6 +90,13 @@ driving loot-seeking) but nothing is currently in vision: they move
 purposefully toward a last-known location or plausible direction rather than
 falling back to plain wander.
 
+**Planned alliance structure** (not yet implemented) — every alliance has
+one leader. The leader decides what the alliance does (its state/goal),
+taking into account the shared needs of all members rather than only its
+own. The other members loosely follow the leader — staying near it and
+adopting its goal, while keeping some individual movement — instead of
+making independent decisions.
+
 **Planned combat resolution** (not yet implemented):
 - Effective strength = own strength + a fraction of active allies' strength.
 - Base win probability = `strength_A / (strength_A + strength_B)`.
@@ -111,13 +127,14 @@ falling back to plain wander.
 
 ## Remaining build order
 
-1. Needs — hunger/thirst/sleep decay over time; some way to visualize it
-   (feeds into the visual state indicators enhancement).
+1. ~~Needs — hunger/thirst/sleep decay over time; some way to visualize it
+   (feeds into the visual state indicators enhancement).~~ Done.
 2. Loot — spawning and pickup in `arena.py`, weighted toward the center.
 3. AI states with real goals, including vision radius and `SEARCHING`
    (`ai.py`).
 4. Combat resolution (`combat.py`).
-5. Alliances, layered on top of AI and combat.
+5. Alliances, layered on top of AI and combat. Leader-based — see
+   "Planned alliance structure" above.
 6. Remaining enhancements: elimination feed, visual state indicators (may
    fold into steps 1 and 3), simulation speed control, post-run summary.
 

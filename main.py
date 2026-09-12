@@ -40,6 +40,16 @@ def main():
         # the frame that gets drawn shows one consistent world state.
         for player in players:
             player.move()
+            player.update_needs()
+
+        # Remove players who died this frame. `survivors` is a new list
+        # containing only the living players; it replaces the old list.
+        survivors = [player for player in players if player.alive]
+        for player in players:
+            if not player.alive:
+                print(f"Player {player.id} died of {player.cause_of_death}. "
+                      f"{len(survivors)} remaining.")
+        players = survivors
 
         # Draw pass
         screen.fill(BACKGROUND_COLOR)
