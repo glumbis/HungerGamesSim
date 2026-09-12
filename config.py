@@ -66,7 +66,7 @@ CARRY_LIMITS = {            # the most of each item a player will carry
 }
 
 # AI
-VISION_RADIUS = 120         # how far (pixels) a player can see
+VISION_RADIUS = 80          # how far (pixels) a player can see
 STEER_TURN_RATE = 0.2       # max radians per frame when turning toward a target
 STEER_SNAP_DISTANCE = 30    # closer than this, face the target directly (prevents circling it)
 ARRIVE_DISTANCE = 10        # how close counts as "arrived" at a search point
@@ -82,3 +82,34 @@ REST_SECONDS_TO_FULL = 15   # seconds of rest to recover sleep from 0 to 100
 # Debug view (toggle with the D key)
 VISION_CIRCLE_COLOR = (55, 55, 55)
 LEGEND_TEXT_COLOR = (200, 200, 200)
+
+# Combat
+STRENGTH_MIN = 1            # weakest possible player
+STRENGTH_MAX = 10           # strongest possible player
+WEAPON_STRENGTH_BONUS = 5   # added to strength while carrying a weapon
+COMBAT_RANGE = 10           # a hunter this close to its prey starts a fight
+OUTCOME_WEIGHTS = {         # relative chance of each kind of fight outcome
+    "ELIMINATION": 0.6,     # loser is eliminated, unless it escapes (then drops items)
+    "STANDOFF": 0.2,        # nobody hurt, both back off
+    "MUTUAL_LOSS": 0.2,     # both drop an item and back off
+}
+ESCAPE_DROP_FRACTION = 0.5  # share of each item type an escaping loser drops
+RETREAT_SECONDS = 3         # after a fight both survive, they back off (and can't fight) this long
+RETREAT_DISTANCE = 150      # how far away a retreating/avoiding player aims
+ITEM_DROP_SCATTER = 15      # dropped items land up to this many pixels away
+
+ESCAPE_BONUS = 0.2          # added to a loser's escape chance (raise if fights are too deadly)
+ESCAPE_MAX = 0.9            # escape chance never goes above this
+
+# Hunting and avoiding
+# On first seeing another player, a player chooses to fight or avoid it.
+# The chance to fight equals its aggression (0-1), multiplied by
+# WEAPON_FEAR_FACTOR if the other player is armed and it is not.
+WEAPON_FEAR_FACTOR = 0.5
+HUNT_GIVE_UP_SECONDS = 10   # a hunter gives up a chase after this long
+HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
+
+# Fight marker
+FIGHT_FLASH_SECONDS = 0.5
+FIGHT_FLASH_COLOR = (255, 60, 60)
+FIGHT_FLASH_RADIUS = 14

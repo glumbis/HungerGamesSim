@@ -3,7 +3,8 @@ import random
 
 import pygame
 from config import (
-    SCREEN_WIDTH, SCREEN_HEIGHT, PLAYER_RADIUS,
+    SCREEN_WIDTH, SCREEN_HEIGHT, PLAYER_RADIUS, FPS,
+    ITEM_DROP_SCATTER, FIGHT_FLASH_SECONDS, FIGHT_FLASH_COLOR, FIGHT_FLASH_RADIUS,
     LOOT_COUNTS, LOOT_CENTER_FRACTION, LOOT_CENTER_SPREAD, LOOT_SIZE, LOOT_COLORS,
 )
 from utils import distance
@@ -12,8 +13,11 @@ from utils import distance
 class LootItem:
     """A single item lying on the ground."""
 
-    def __init__(self, kind, x, y):
+    def __init__(self, kind, x, y, dropped_by=None):
         self.kind = kind  # "food", "water" or "weapon"
+        # The player who dropped this item in a fight (None for spawned
+        # loot). That player will not pick it back up.
+        self.dropped_by = dropped_by
         self.x = x
         self.y = y
         # Set to True when picked up. Players who remember this item only
@@ -28,6 +32,7 @@ class Arena:
         self.center_x = SCREEN_WIDTH / 2
         self.center_y = SCREEN_HEIGHT / 2
         self.loot = []
+        self.flashes = []  # fight markers, each [x, y, frames_left]
         self.spawn_loot()
 
     def spawn_loot(self):
@@ -102,7 +107,7 @@ class Arena:
         remaining = []
         for item in self.loot:
             for player in players:
-                if player.can_carry(item.kind) and \
+                if player.can_carry(item.kind) and player is not item.dropped_by and \
                         distance(player.x, player.y, item.x, item.y) <= pickup_distance:
                     player.pick_up(item.kind)
                     item.taken = True
@@ -111,8 +116,28 @@ class Arena:
                 remaining.append(item)
         self.loot = remaining
 
+    def drop_item(self, kind, x, y, dropped_by):
+        """Put an item on the ground a short random distance from (x, y)."""
+        x += random.uniform(-ITEM_DROP_SCATTER, ITEM_DROP_SCATTER)
+        y += random.uniform(-ITEM_DROP_SCATTER, ITEM_DROP_SCATTER)
+        x = max(LOOT_SIZE, min(x, SCREEN_WIDTH - LOOT_SIZE))
+        y = max(LOOT_SIZE, min(y, SCREEN_HEIGHT - LOOT_SIZE))
+        self.loot.append(LootItem(kind, x, y, dropped_by))
+
+    def add_flash(self, x, y):
+        """Show a short-lived ring where a fight happened."""
+        self.flashes.append([x, y, int(FIGHT_FLASH_SECONDS * FPS)])
+
+    def update_flashes(self):
+        """Count every fight marker down by one frame and remove expired ones."""
+        for flash in self.flashes:
+            flash[2] -= 1
+        self.flashes = [flash for flash in self.flashes if flash[2] > 0]
+
     def draw(self, screen):
         half = LOOT_SIZE // 2
         for item in self.loot:
             rect = pygame.Rect(int(item.x) - half, int(item.y) - half, LOOT_SIZE, LOOT_SIZE)
             pygame.draw.rect(screen, LOOT_COLORS[item.kind], rect)
+        for x, y, _ in self.flashes:  # _ = the frames_left value, not needed here
+            pygame.draw.circle(screen, FIGHT_FLASH_COLOR, (int(x), int(y)), FIGHT_FLASH_RADIUS, 2)

@@ -12,6 +12,7 @@ from config import (
     WARNING_DOT_RADIUS, WARNING_DOT_SPACING, WARNING_DOT_OFFSET_Y,
     LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
     CARRY_LIMITS, VISION_RADIUS, VISION_CIRCLE_COLOR, REST_SECONDS_TO_FULL,
+    LOOT_COLORS, STRENGTH_MIN, STRENGTH_MAX,
 )
 from ai import RESTING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -53,6 +54,18 @@ class Player:
         self.target = None          # (x, y) to head for, or None to wander
         self.search_point = None    # current exploration point when searching
         self.known_loot = set()     # loot items this player has seen
+        self.reactions = {}         # other player in sight -> "fight" or "avoid"
+        self.prey = None            # the player being hunted, if any
+        self.prey_last_seen = None  # (x, y) where the prey was last in sight
+        self.hunt_timer = 0         # frames spent on the current hunt
+        self.hunt_cooldown = 0      # frames left before a new hunt may start
+
+        # Combat (set and used by combat.py)
+        self.strength = random.uniform(STRENGTH_MIN, STRENGTH_MAX)
+        self.kills = 0
+        self.killer_id = None       # id of the player who eliminated this one
+        self.retreat_timer = 0      # frames left backing off after a fight (can't fight meanwhile)
+        self.retreat_from = None    # the opponent being backed away from
 
     def can_carry(self, kind):
         return self.inventory[kind] < CARRY_LIMITS[kind]
@@ -134,6 +147,11 @@ class Player:
         # In the debug view the dot is colored by state
         color = STATE_COLORS[self.state] if debug else PLAYER_COLOR
         pygame.draw.circle(screen, color, (int(self.x), int(self.y)), PLAYER_RADIUS)
+        if debug and self.inventory["weapon"] > 0:
+            # Red outline = carrying a weapon
+            pygame.draw.circle(
+                screen, LOOT_COLORS["weapon"], (int(self.x), int(self.y)), PLAYER_RADIUS + 2, 1
+            )
         self.draw_warnings(screen)
 
     def draw_warnings(self, screen):

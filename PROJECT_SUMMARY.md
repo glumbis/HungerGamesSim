@@ -51,7 +51,7 @@ the next step onward.)
   otherwise `SEARCHING` remembered items or random points — if several are
   urgent, the lowest value wins. With no urgent need: `GATHERING` visible
   loot within carry limits (3 food, 3 water, 1 weapon), else `WANDER`.
-  Players see 120 px and remember loot they have seen; they only learn an
+  Players see 80 px (originally 120) and remember loot they have seen; they only learn an
   item is gone when they see its spot again. Steering turns at most
   0.2 rad/frame and faces the target directly within 30 px. Press **D** for
   the debug view (vision circles, state-colored dots, legend).
@@ -59,13 +59,35 @@ the next step onward.)
   spread evenly via a jittered grid. Player and loot size reduced to 4 px
   so the arena reads larger.
 
-Nothing beyond this (combat, `HUNTING`/`AVOIDING`, alliances) is
-implemented yet.
+- **Combat** (fourth item) — see `combat.py` and `ai.py`. Strength is 1–10
+  per player, +5 while carrying a weapon. When a player first sees another,
+  it chooses once to fight or avoid it (chance to fight = its aggression,
+  halved if the other is armed and it is not); the choice lasts while the
+  other stays in sight. Resting players are asleep: they see nothing and
+  are always attacked by anyone who sees them. Hunters chase their prey,
+  search its last-seen spot if it leaves sight, and give up after 10 s
+  (then 5 s without starting a hunt, avoiding instead). A fight starts
+  when a hunter touches its prey. Winner chance = share of combined
+  strength. Outcome weights: elimination 60% (the loser escapes with
+  chance = share of combined speed + 0.2, max 0.9, dropping half its
+  items; otherwise it is eliminated and drops everything), standoff 20%,
+  mutual loss 20% (each drops one item). If both survive, they back off
+  for 3 s and cannot fight meanwhile. Players ignore items they dropped.
+  Fights show a red ring and print to the terminal; the last player
+  standing is announced. Vision reduced to 80 px.
+  `decide()` priority: opening phase → post-fight retreat → react to
+  players in sight → urgent needs → gathering → wander. An urgent need
+  cancels a hunt whose prey is out of sight.
+
+Nothing beyond this (alliances, remaining enhancements) is implemented
+yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
 durations are deliberately fast so test runs are short. Lower them once
 the simulation speed control enhancement exists, so viewing speed and
-testing speed can differ.
+testing speed can differ. Combat currently causes roughly 60–85% of
+deaths (5 test seeds, escape bonus 0.2); `ESCAPE_BONUS` and
+`OUTCOME_WEIGHTS` in `config.py` are the main levers if that is too high.
 
 ## Architecture
 
@@ -75,11 +97,11 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`. Still needs: `strength`, alliance membership. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Still needs: alliance membership. |
 | `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
 | `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
-| `combat.py` | Empty file | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
+| `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
 | `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
@@ -99,8 +121,7 @@ players, so interactions never leave a frame half-updated on screen.
 defaults to 3.14, which has no pygame. VS Code is pointed at 3.12 in
 `.vscode/settings.json`.
 
-**AI state machine** (implemented in `ai.py`, except `HUNTING` and
-`AVOIDING`, which arrive with combat) — each player gets a
+**AI state machine** (implemented in `ai.py`) — each player gets a
 `state` (e.g. `RUSH_LOOT`, `FLEE_OUTWARD`, `SEEK_WATER`, `HUNTING`,
 `SEARCHING`, `RESTING`, `AVOIDING`) that determines their current movement
 target. A personality trait (e.g. aggression) assigned at spawn biases the
@@ -124,7 +145,7 @@ own. The other members loosely follow the leader — staying near it and
 adopting its goal, while keeping some individual movement — instead of
 making independent decisions.
 
-**Planned combat resolution** (not yet implemented):
+**Combat resolution** (implemented in `combat.py`; allies' strength not yet added):
 - Effective strength = own strength + a fraction of active allies' strength.
 - Base win probability = `strength_A / (strength_A + strength_B)`.
 - Speed determines whether the loser manages to flee instead of being
@@ -159,7 +180,7 @@ making independent decisions.
 2. ~~Loot — spawning and pickup in `arena.py`, weighted toward the center.~~ Done.
 3. ~~AI states with real goals, including vision radius and `SEARCHING`
    (`ai.py`).~~ Done (`HUNTING`/`AVOIDING` moved to step 4).
-4. Combat resolution (`combat.py`).
+4. ~~Combat resolution (`combat.py`).~~ Done, including `HUNTING`/`AVOIDING`.
 5. Alliances, layered on top of AI and combat. Leader-based — see
    "Planned alliance structure" above.
 6. Remaining enhancements: elimination feed, visual state indicators (may

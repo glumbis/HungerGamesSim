@@ -7,6 +7,7 @@ from config import (
 from player import Player
 from arena import Arena
 import ai
+import combat
 
 
 def create_starting_players():
@@ -47,6 +48,7 @@ def main():
         ai.choose_opening_state(player, arena)
 
     debug = False
+    game_over = False
     print("Press D to toggle the debug view (vision circles and state colors).")
 
     running = True
@@ -60,19 +62,34 @@ def main():
         # Update pass: every player acts before anything is drawn, so
         # the frame that gets drawn shows one consistent world state.
         for player in players:
-            ai.decide(player, arena)  # choose state and target
+            ai.decide(player, arena, players)  # choose state and target
             player.move()
             player.use_supplies()     # before needs drop, so a carried item can save them
             player.update_needs()
+
+        # Hunters that have reached their prey fight
+        combat.handle_fights(players, arena)
+        arena.update_flashes()
 
         # Remove players who died this frame. `survivors` is a new list
         # containing only the living players; it replaces the old list.
         survivors = [player for player in players if player.alive]
         for player in players:
             if not player.alive:
-                print(f"Player {player.id} died of {player.cause_of_death}. "
-                      f"{len(survivors)} remaining.")
+                if player.cause_of_death == "combat":
+                    how = f"was eliminated by Player {player.killer_id}"
+                else:
+                    how = f"died of {player.cause_of_death}"
+                print(f"Player {player.id} {how}. {len(survivors)} remaining.")
         players = survivors
+
+        if not game_over and len(players) <= 1:
+            game_over = True
+            if players:
+                winner = players[0]
+                print(f"Player {winner.id} is the last one standing, with {winner.kills} kill(s).")
+            else:
+                print("No survivors.")
 
         # Living players pick up any loot they are touching
         arena.handle_pickups(players)
@@ -82,7 +99,7 @@ def main():
         if debug:
             for player in players:
                 player.draw_vision(screen)
-        arena.draw(screen)      # loot before players, so players are drawn on top
+        arena.draw(screen)      # loot and fight markers before players, so players are on top
         for player in players:
             player.draw(screen, debug)
         if debug:
