@@ -13,6 +13,7 @@ from config import (
     LOOT_COUNTS, LOOT_RESTORES, LOOT_RESTORE_AMOUNT, LOOT_USE_THRESHOLD,
     CARRY_LIMITS, VISION_RADIUS, VISION_CIRCLE_COLOR, REST_SECONDS_TO_FULL,
     LOOT_COLORS, STRENGTH_MIN, STRENGTH_MAX,
+    WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH,
 )
 from ai import RESTING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -67,14 +68,38 @@ class Player:
         self.retreat_timer = 0      # frames left backing off after a fight (can't fight meanwhile)
         self.retreat_from = None    # the opponent being backed away from
 
+        # Alliances (set and used by alliances.py and ai.py)
+        self.alliance = None        # the Alliance this player belongs to, if any
+        self.former_allies = set()  # players it will never ally with again
+        self.follow_offset = (0, 0) # this member's spot relative to its leader
+        self.visible_loot = []      # what it saw this frame (read by its leader)
+        self.visible_players = []
+
     def can_carry(self, kind):
         return self.inventory[kind] < CARRY_LIMITS[kind]
+
+    def fighting_strength(self):
+        """Own strength plus the weapon bonus (without any help from allies)."""
+        bonus = WEAPON_STRENGTH_BONUS if self.inventory["weapon"] > 0 else 0
+        return self.strength + bonus
+
+    def current_speed(self):
+        """A leader moves no faster than its slowest member, and at half that
+        speed while a member has fallen behind, so the group stays together."""
+        if self.alliance is None or self.alliance.leader is not self:
+            return self.speed
+        members = self.alliance.members
+        slowest = min(member.speed for member in members)
+        straggling = any(
+            distance(self.x, self.y, member.x, member.y) > FOLLOW_LEASH for member in members
+        )
+        return slowest * 0.5 if straggling else slowest
 
     def move(self):
         if self.state == RESTING:
             return  # resting players stand still
 
-        step = self.speed
+        step = self.current_speed()
         if self.target is None:
             # Wander: nudge the heading slightly instead of picking a brand
             # new random direction each frame — this is what makes the path
@@ -94,7 +119,7 @@ class Player:
                 turn = angle_difference(self.heading, desired)
                 turn = max(-STEER_TURN_RATE, min(turn, STEER_TURN_RATE))
                 self.heading += turn + random.uniform(-WANDER_TURN_RATE / 3, WANDER_TURN_RATE / 3)
-            step = min(self.speed, dist)  # don't overshoot the target
+            step = min(step, dist)  # don't overshoot the target
 
         # Keep the heading between 0 and 2*pi so it never grows without limit
         self.heading %= 2 * math.pi
@@ -144,9 +169,20 @@ class Player:
         )
 
     def draw(self, screen, debug=False):
-        # In the debug view the dot is colored by state
-        color = STATE_COLORS[self.state] if debug else PLAYER_COLOR
+        # Debug view: dot colored by state. Normal view: allies share a color.
+        if debug:
+            color = STATE_COLORS[self.state]
+        elif self.alliance is not None:
+            color = self.alliance.color
+        else:
+            color = PLAYER_COLOR
         pygame.draw.circle(screen, color, (int(self.x), int(self.y)), PLAYER_RADIUS)
+        if self.alliance is not None and self.alliance.leader is self:
+            # Ring = alliance leader (white normally, alliance color in debug view)
+            ring_color = self.alliance.color if debug else LEADER_RING_COLOR
+            pygame.draw.circle(
+                screen, ring_color, (int(self.x), int(self.y)), PLAYER_RADIUS + 4, 1
+            )
         if debug and self.inventory["weapon"] > 0:
             # Red outline = carrying a weapon
             pygame.draw.circle(

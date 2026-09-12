@@ -7,6 +7,7 @@ from config import (
 from player import Player
 from arena import Arena
 import ai
+import alliances
 import combat
 
 
@@ -49,7 +50,7 @@ def main():
 
     debug = False
     game_over = False
-    print("Press D to toggle the debug view (vision circles and state colors).")
+    print("Press D to toggle the debug view (vision circles, state colors, alliance lines).")
 
     running = True
     while running:
@@ -61,6 +62,7 @@ def main():
 
         # Update pass: every player acts before anything is drawn, so
         # the frame that gets drawn shows one consistent world state.
+        alliances.share_supplies(players)  # allies hand over food/water first
         for player in players:
             ai.decide(player, arena, players)  # choose state and target
             player.move()
@@ -83,6 +85,9 @@ def main():
                 print(f"Player {player.id} {how}. {len(survivors)} remaining.")
         players = survivors
 
+        # Remove dead members, replace dead leaders, handle betrayals
+        alliances.update_alliances(players)
+
         if not game_over and len(players) <= 1:
             game_over = True
             if players:
@@ -99,6 +104,12 @@ def main():
         if debug:
             for player in players:
                 player.draw_vision(screen)
+                # Line from each alliance member to its leader
+                if player.alliance is not None and player.alliance.leader is not player:
+                    leader = player.alliance.leader
+                    pygame.draw.line(screen, player.alliance.color,
+                                     (int(player.x), int(player.y)),
+                                     (int(leader.x), int(leader.y)))
         arena.draw(screen)      # loot and fight markers before players, so players are on top
         for player in players:
             player.draw(screen, debug)

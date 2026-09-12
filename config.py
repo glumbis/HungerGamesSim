@@ -109,6 +109,27 @@ WEAPON_FEAR_FACTOR = 0.5
 HUNT_GIVE_UP_SECONDS = 10   # a hunter gives up a chase after this long
 HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
 
+# Alliances
+ALLIANCE_CHANCE = 0.6       # chance to ally = this x (1 - aggression) of each side
+ALLIANCE_MAX_SIZE = 4       # most members an alliance can have
+ALLY_STRENGTH_SHARE = 0.3   # share of a nearby ally's strength added in a fight
+ALLY_SUPPORT_RANGE = 40     # allies this close help in a fight
+ALLY_SHARE_RANGE = 40       # allies this close hand over food/water
+FOLLOW_SPREAD = 30          # members stay within about this distance of their leader
+FOLLOW_LEASH = 70           # members collect loot at most this far from their leader
+BETRAYAL_CHANCE_PER_MINUTE = 0.3  # for a member with aggression 1 (scaled by aggression)
+ALLIANCE_COLORS = [         # each new alliance takes the next color
+    (255, 120, 120),
+    (120, 230, 120),
+    (120, 160, 255),
+    (255, 220, 100),
+    (240, 120, 240),
+    (110, 230, 230),
+    (255, 170, 90),
+    (190, 150, 255),
+]
+LEADER_RING_COLOR = (255, 255, 255)
+
 # Fight marker
 FIGHT_FLASH_SECONDS = 0.5
 FIGHT_FLASH_COLOR = (255, 60, 60)

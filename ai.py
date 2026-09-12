@@ -4,13 +4,14 @@ Player.move() then carries that out."""
 import math
 import random
 
+import alliances
 from config import (
     FPS, SCREEN_WIDTH, SCREEN_HEIGHT,
     VISION_RADIUS, ARRIVE_DISTANCE, RUSH_DURATION, FLEE_DURATION,
     FLEE_DISTANCE, FLEE_EDGE_MARGIN,
     SEEK_THRESHOLD, REST_THRESHOLD, REST_UNTIL, LOOT_RESTORES,
     WEAPON_FEAR_FACTOR, HUNT_GIVE_UP_SECONDS, HUNT_COOLDOWN_SECONDS,
-    RETREAT_DISTANCE,
+    RETREAT_DISTANCE, FOLLOW_SPREAD, FOLLOW_LEASH,
 )
 from utils import distance, angle_to
 
@@ -23,6 +24,7 @@ SEARCHING = "SEARCHING"         # looking for food/water, or for prey that left 
 HUNTING = "HUNTING"             # chasing a visible player to attack it
 AVOIDING = "AVOIDING"           # moving away from another player
 GATHERING = "GATHERING"         # no urgent need; collecting visible loot
+FOLLOWING = "FOLLOWING"         # alliance member staying near its leader
 WANDER = "WANDER"               # nothing to do
 
 # Dot color for each state in the debug view
@@ -35,6 +37,7 @@ STATE_COLORS = {
     HUNTING: (255, 40, 40),         # red
     AVOIDING: (170, 120, 70),       # brown
     GATHERING: (80, 210, 210),      # cyan
+    FOLLOWING: (200, 160, 255),     # lavender
     WANDER: (220, 220, 220),        # white
 }
 
@@ -92,8 +95,9 @@ def choose_opening_state(player, arena):
 
 
 def look_around(player, arena, players):
-    """Update the player's memory from what it can see, and return the loot
-    items and other living players currently in sight."""
+    """Update the player's memory from what it can see, and store the loot
+    items and non-allied living players currently in sight on the player
+    (as visible_loot and visible_players)."""
     visible_loot = []
     for item in arena.loot:
         if item.dropped_by is player:
@@ -109,12 +113,42 @@ def look_around(player, arena, players):
         if item.taken and distance(player.x, player.y, item.x, item.y) <= VISION_RADIUS:
             player.known_loot.discard(item)
 
-    visible_players = [
+    player.visible_loot = visible_loot
+    player.visible_players = [
         other for other in players
-        if other is not player and other.alive
+        if other is not player and other.alive and not is_ally(player, other)
         and distance(player.x, player.y, other.x, other.y) <= VISION_RADIUS
     ]
-    return visible_loot, visible_players
+
+
+def is_ally(player, other):
+    return player.alliance is not None and other.alliance is player.alliance
+
+
+def shared_view(leader):
+    """Everything any member of the leader's alliance can see, without
+    duplicates, plus everything any member remembers. This is how the
+    leader takes the whole group into account."""
+    members = leader.alliance.members
+    loot, others, known = [], [], set()
+    for member in members:
+        for item in member.visible_loot:
+            # Skip items already taken, and items the leader dropped (it
+            # won't pick those up)
+            if not item.taken and item.dropped_by is not leader and item not in loot:
+                loot.append(item)
+        for other in member.visible_players:
+            if other.alive and not is_ally(leader, other) and other not in others:
+                others.append(other)
+        for item in member.known_loot:
+            if item.dropped_by is leader:
+                continue
+            # If any member can see a remembered item is gone, the group knows
+            if item.taken and any(
+                    distance(m.x, m.y, item.x, item.y) <= VISION_RADIUS for m in members):
+                continue
+            known.add(item)
+    return loot, others, known
 
 
 def nearest(player, things):
@@ -127,21 +161,25 @@ def nearest(player, things):
     )
 
 
-def most_urgent_need(player):
+def most_urgent_need(members, resting):
     """Return "sleep", "food", "water", or None if nothing needs doing.
+    `members` is [player] for a player on its own, or every member of an
+    alliance, so a leader acts on the needs of the whole group.
 
-    - Sleep counts when it is low, or while already resting and not yet
-      rested enough.
-    - Food/water counts when hunger/thirst is low AND nothing suitable is
-      carried (if something is carried, use_supplies() handles it).
+    - Sleep counts when anyone is low, or while already resting and not
+      everyone has rested enough.
+    - Food/water counts when anyone's hunger/thirst is low AND nobody
+      carries anything to fix it (carried items are used or shared instead).
     If several count, the one with the lowest value wins."""
-    urgent = {}  # what is needed -> current value of that need
-    sleep = player.needs["sleep"]
-    if sleep < REST_THRESHOLD or (player.state == RESTING and sleep < REST_UNTIL):
-        urgent["sleep"] = sleep
+    urgent = {}  # what is needed -> lowest value of that need in the group
+    lowest_sleep = min(member.needs["sleep"] for member in members)
+    if lowest_sleep < REST_THRESHOLD or (resting and lowest_sleep < REST_UNTIL):
+        urgent["sleep"] = lowest_sleep
     for kind, need in LOOT_RESTORES.items():  # ("food", "hunger"), ("water", "thirst")
-        if player.needs[need] < SEEK_THRESHOLD and player.inventory[kind] == 0:
-            urgent[kind] = player.needs[need]
+        lowest = min(member.needs[need] for member in members)
+        carried = sum(member.inventory[kind] for member in members)
+        if lowest < SEEK_THRESHOLD and carried == 0:
+            urgent[kind] = lowest
 
     if not urgent:
         return None
@@ -154,7 +192,9 @@ def choose_reaction(player, other):
     if other.state == RESTING:
         return FIGHT
     fight_chance = player.aggression
-    if other.inventory["weapon"] > 0 and player.inventory["weapon"] == 0:
+    group = player.alliance.members if player.alliance else [player]
+    group_armed = any(member.inventory["weapon"] > 0 for member in group)
+    if other.inventory["weapon"] > 0 and not group_armed:
         fight_chance *= WEAPON_FEAR_FACTOR  # wary of an armed opponent
     return FIGHT if random.random() < fight_chance else AVOID
 
@@ -187,7 +227,11 @@ def hunt(player, visible_players):
         player.target = (prey.x, prey.y)
         return True
 
-    # Prey is out of sight: go to where it was last seen
+    # Prey is out of sight: go to where it was last seen. (A player that
+    # joined a group hunt may never have seen the prey itself.)
+    if player.prey_last_seen is None:
+        stop_hunting(player)
+        return False
     if distance(player.x, player.y, *player.prey_last_seen) > ARRIVE_DISTANCE:
         set_state(player, SEARCHING)
         player.target = player.prey_last_seen
@@ -197,18 +241,24 @@ def hunt(player, visible_players):
 
 
 def react_to_players(player, visible_players, need):
-    """Every player in sight is either fought or avoided. Returns True if
-    the player is hunting or avoiding this frame."""
+    """Every non-allied player in sight is allied with, fought or avoided.
+    Called for players on their own and for alliance leaders. Returns True
+    if the player is busy with this for the current frame."""
     # Keep reactions only for players still in sight (a dictionary
     # comprehension builds a new dictionary from the old one)
     player.reactions = {other: reaction for other, reaction in player.reactions.items()
                         if other in visible_players}
     for other in visible_players:
-        if other not in player.reactions or other.state == RESTING:
+        if other not in player.reactions:
+            # First sighting: maybe team up, otherwise choose fight or avoid
+            if other.state != RESTING and alliances.try_to_ally(player, other):
+                return True  # the groups changed; decide again next frame
             player.reactions[other] = choose_reaction(player, other)
+        elif other.state == RESTING:
+            player.reactions[other] = FIGHT  # fell asleep in sight: attack
 
-    # Continue an ongoing hunt. If the prey is out of sight and the player
-    # has an urgent need, the need wins and the hunt is dropped.
+    # Continue an ongoing hunt. If the prey is out of sight and there is an
+    # urgent need, the need wins and the hunt is dropped.
     if player.prey is not None:
         if player.prey in visible_players or need is None:
             if hunt(player, visible_players):
@@ -236,15 +286,59 @@ def react_to_players(player, visible_players, need):
     return False
 
 
+def follow_leader(player):
+    """Alliance members don't make their own plans: they join the leader's
+    hunts, sleep when it sleeps, and otherwise stay loosely near it."""
+    leader = player.alliance.leader
+
+    # Join the leader's hunt
+    if leader.prey is not None and leader.prey.alive:
+        player.prey = leader.prey
+        if player.prey in player.visible_players:
+            set_state(player, HUNTING)
+            player.target = (player.prey.x, player.prey.y)
+            return
+    else:
+        player.prey = None
+
+    to_leader = distance(player.x, player.y, leader.x, leader.y)
+
+    # Sleep when the leader sleeps, once close to it
+    if leader.state == RESTING and to_leader <= FOLLOW_SPREAD * 2:
+        set_state(player, RESTING)
+        player.target = None
+        return
+
+    # Collect loot close to the leader
+    if leader.state != RESTING:
+        wanted = [item for item in player.visible_loot
+                  if player.can_carry(item.kind)
+                  and distance(item.x, item.y, leader.x, leader.y) <= FOLLOW_LEASH]
+        item = nearest(player, wanted)
+        if item:
+            set_state(player, GATHERING)
+            player.target = (item.x, item.y)
+            return
+
+    # Otherwise head for the member's own spot near the leader, and pick a
+    # new spot on arrival so the group keeps shifting a little
+    offset_x, offset_y = player.follow_offset
+    spot = clamp_to_arena(leader.x + offset_x, leader.y + offset_y, ARRIVE_DISTANCE)
+    if distance(player.x, player.y, *spot) < ARRIVE_DISTANCE:
+        player.follow_offset = alliances.random_follow_offset()
+    set_state(player, FOLLOWING)
+    player.target = spot
+
+
 def decide(player, arena, players):
-    visible_loot, visible_players = look_around(player, arena, players)
+    look_around(player, arena, players)
     player.state_timer += 1
     if player.hunt_cooldown > 0:
         player.hunt_cooldown -= 1
 
     # 1. Opening phase: rush or flee until done or time runs out
     if player.state == RUSH_LOOT and player.state_timer < RUSH_DURATION * FPS:
-        wanted = [item for item in visible_loot if player.can_carry(item.kind)]
+        wanted = [item for item in player.visible_loot if player.can_carry(item.kind)]
         item = nearest(player, wanted)
         if item:
             player.target = (item.x, item.y)
@@ -268,14 +362,29 @@ def decide(player, arena, players):
         player.target = point_away_from(player, opponent.x, opponent.y)
         return
 
-    need = most_urgent_need(player)
+    # 3. Alliance members follow their leader instead of deciding for themselves
+    if player.alliance is not None and player.alliance.leader is not player:
+        follow_leader(player)
+        return
+
+    # Players on their own use what they see; leaders use the whole group's view
+    if player.alliance is not None:
+        visible_loot, visible_players, known_loot = shared_view(player)
+        members = player.alliance.members
+    else:
+        visible_loot, visible_players = player.visible_loot, player.visible_players
+        known_loot = player.known_loot
+        members = [player]
+
+    need = most_urgent_need(members, player.state == RESTING)
     asleep = player.state == RESTING and need == "sleep"
 
-    # 3. Players in sight are fought or avoided (a sleeping player sees nothing)
+    # 4. Players in sight are allied with, fought or avoided
+    #    (a sleeping player sees nothing)
     if not asleep and react_to_players(player, visible_players, need):
         return
 
-    # 4. Urgent needs
+    # 5. Urgent needs
     if need == "sleep":
         set_state(player, RESTING)
         player.target = None
@@ -289,7 +398,7 @@ def decide(player, arena, players):
             return
 
         set_state(player, SEARCHING)
-        remembered = [item for item in player.known_loot if item.kind == need]
+        remembered = [item for item in known_loot if item.kind == need]
         if remembered:
             # Head for the closest remembered item (it may already be gone)
             item = nearest(player, remembered)
@@ -302,7 +411,7 @@ def decide(player, arena, players):
             player.target = player.search_point
         return
 
-    # 5. Collect loot in sight that can still be carried
+    # 6. Collect loot in sight that can still be carried
     wanted = [item for item in visible_loot if player.can_carry(item.kind)]
     if wanted:
         set_state(player, GATHERING)
@@ -310,6 +419,6 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 6. Nothing to do
+    # 7. Nothing to do
     set_state(player, WANDER)
     player.target = None

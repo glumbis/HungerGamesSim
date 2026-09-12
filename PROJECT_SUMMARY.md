@@ -79,8 +79,25 @@ the next step onward.)
   players in sight → urgent needs → gathering → wander. An urgent need
   cancels a hunt whose prey is out of sight.
 
-Nothing beyond this (alliances, remaining enhancements) is implemented
-yet.
+- **Alliances** (fifth item) — see `alliances.py`. When a player on its
+  own or an alliance leader first sees a non-ally, they may team up before
+  choosing fight/avoid: chance = 0.6 × (1 − own aggression) × (1 − the
+  other side's aggression; an alliance answers through its leader). Max 4
+  members; alliances never merge; former allies never ally again. The
+  strongest member leads (re-chosen if the leader dies). The leader decides
+  using the group's combined vision and memory and the group's needs (rest
+  if anyone's sleep is low; seek food/water if anyone is low and nobody
+  carries it). Members follow loosely (own spot within ~30 px, loot within
+  70 px of the leader), join the leader's hunts and sleep beside it. Allies
+  within 40 px share food/water and add 30% of their strength in fights.
+  A leader moves at its slowest member's speed (half that while a member
+  is more than 70 px away). Betrayal: 0.3 per minute × aggression; the
+  betrayer attacks the nearest former ally. An alliance breaks up below 2
+  members, or when only its members are left. Normal view: members in the
+  alliance color, leader with a white ring. Debug view: member-to-leader
+  lines and the `FOLLOWING` state. Events are printed to the terminal.
+
+Nothing beyond this (remaining enhancements) is implemented yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
 durations are deliberately fast so test runs are short. Lower them once
@@ -97,11 +114,12 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Still needs: alliance membership. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Alliance fields (`alliance`, `former_allies`, `follow_offset`, `visible_loot`, `visible_players`), `fighting_strength()`, `current_speed()`. |
 | `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
 | `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
+| `alliances.py` | Implemented | `Alliance` class (members, leader, color), forming/joining, supply sharing, betrayal, breakups. |
 | `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
@@ -138,14 +156,14 @@ driving loot-seeking) but nothing is currently in vision: they move
 purposefully toward a last-known location or plausible direction rather than
 falling back to plain wander.
 
-**Planned alliance structure** (not yet implemented) — every alliance has
+**Alliance structure** (implemented in `alliances.py` and `ai.py`) — every alliance has
 one leader. The leader decides what the alliance does (its state/goal),
 taking into account the shared needs of all members rather than only its
 own. The other members loosely follow the leader — staying near it and
 adopting its goal, while keeping some individual movement — instead of
 making independent decisions.
 
-**Combat resolution** (implemented in `combat.py`; allies' strength not yet added):
+**Combat resolution** (implemented in `combat.py`):
 - Effective strength = own strength + a fraction of active allies' strength.
 - Base win probability = `strength_A / (strength_A + strength_B)`.
 - Speed determines whether the loser manages to flee instead of being
@@ -181,8 +199,8 @@ making independent decisions.
 3. ~~AI states with real goals, including vision radius and `SEARCHING`
    (`ai.py`).~~ Done (`HUNTING`/`AVOIDING` moved to step 4).
 4. ~~Combat resolution (`combat.py`).~~ Done, including `HUNTING`/`AVOIDING`.
-5. Alliances, layered on top of AI and combat. Leader-based — see
-   "Planned alliance structure" above.
+5. ~~Alliances, layered on top of AI and combat.~~ Done (leader-based — see
+   "Alliance structure" above).
 6. Remaining enhancements: elimination feed, visual state indicators (may
    fold into steps 1 and 3), simulation speed control, post-run summary.
 

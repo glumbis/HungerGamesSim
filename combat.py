@@ -5,10 +5,10 @@ import math
 import random
 
 from config import (
-    FPS, COMBAT_RANGE, WEAPON_STRENGTH_BONUS, OUTCOME_WEIGHTS,
+    FPS, COMBAT_RANGE, OUTCOME_WEIGHTS, ALLY_STRENGTH_SHARE, ALLY_SUPPORT_RANGE,
     ESCAPE_DROP_FRACTION, RETREAT_SECONDS, ESCAPE_BONUS, ESCAPE_MAX,
 )
-from ai import stop_hunting
+from ai import stop_hunting, RESTING
 from utils import distance
 
 # Outcome names (must match the keys of OUTCOME_WEIGHTS in config.py)
@@ -18,10 +18,15 @@ MUTUAL_LOSS = "MUTUAL_LOSS"
 
 
 def effective_strength(player):
-    """Strength used in a fight: base strength plus a weapon bonus.
-    (Alliances will later add a share of allies' strength here.)"""
-    bonus = WEAPON_STRENGTH_BONUS if player.inventory["weapon"] > 0 else 0
-    return player.strength + bonus
+    """Strength used in a fight: the player's own strength (including any
+    weapon), plus a share of the strength of awake allies close enough to help."""
+    total = player.fighting_strength()
+    if player.alliance is not None:
+        for ally in player.alliance.members:
+            if ally is not player and ally.alive and ally.state != RESTING and \
+                    distance(player.x, player.y, ally.x, ally.y) <= ALLY_SUPPORT_RANGE:
+                total += ALLY_STRENGTH_SHARE * ally.fighting_strength()
+    return total
 
 
 def handle_fights(players, arena):
