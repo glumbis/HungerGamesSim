@@ -92,8 +92,16 @@ STATE_SPEED_MULTIPLIERS = {
     "RUSH_LOOT": 1.3,
     "FLEE_OUTWARD": 1.3,
     "SEEKING": 1.2,
+    "TRACKING": 1.2,
 }
 CHASE_LINE_COLOR = (130, 45, 45)  # faint line from a hunter to its prey
+
+# Event feed (bottom-left corner)
+FEED_MAX_LINES = 6          # most events shown at once
+FEED_SECONDS = 10           # how long an event stays on screen
+FEED_LINE_HEIGHT = 18
+FEED_TEXT_COLOR = (235, 235, 235)
+FEED_SHADOW_COLOR = (0, 0, 0)
 
 # Debug view (toggle with the D key)
 VISION_CIRCLE_COLOR = (55, 55, 55)
@@ -106,16 +114,16 @@ WEAPON_STRENGTH_BONUS = 5   # added to strength while carrying a weapon
 COMBAT_RANGE = 10           # a hunter this close to its prey starts a fight
 STALK_DISTANCE = 20         # hunters wait this far from prey that can't be attacked yet
 OUTCOME_WEIGHTS = {         # relative chance of each kind of fight outcome
-    "ELIMINATION": 0.6,     # loser is eliminated, unless it escapes (then drops items)
-    "STANDOFF": 0.2,        # nobody hurt, both back off
-    "MUTUAL_LOSS": 0.2,     # both drop an item and back off
+    "ELIMINATION": 0.75,    # loser is eliminated, unless it escapes (then drops items)
+    "STANDOFF": 0.1,        # nobody hurt, both back off
+    "MUTUAL_LOSS": 0.15,    # both drop an item and back off
 }
 ESCAPE_DROP_FRACTION = 0.5  # share of each item type an escaping loser drops
 RETREAT_SECONDS = 3         # after a fight both survive, they back off (and can't fight) this long
 RETREAT_DISTANCE = 150      # how far away a retreating/avoiding player aims
 ITEM_DROP_SCATTER = 15      # dropped items land up to this many pixels away
 
-ESCAPE_BONUS = 0.2          # added to a loser's escape chance (raise if fights are too deadly)
+ESCAPE_BONUS = 0.05         # added to a loser's escape chance (raise if fights are too deadly)
 ESCAPE_MAX = 0.9            # escape chance never goes above this
 
 # Hunting and avoiding
@@ -127,7 +135,7 @@ HUNT_GIVE_UP_SECONDS = 10   # a hunter gives up a chase after this long
 HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
 
 # Alliances
-ALLIANCE_CHANCE = 0.6       # chance to ally = this x (1 - aggression) of each side
+ALLIANCE_CHANCE = 0.2       # chance to ally = this x (1 - aggression) of each side
 ALLIANCE_MAX_SIZE = 4       # most members an alliance can have
 ALLY_STRENGTH_SHARE = 0.5   # share of a nearby ally's strength added in a fight
 ALLY_SUPPORT_RANGE = 60     # allies this close help in a fight
@@ -135,6 +143,15 @@ ALLY_SHARE_RANGE = 40       # allies this close hand over food/water
 FOLLOW_SPREAD = 16          # members stay within about this distance of their leader
 FOLLOW_LEASH = 45           # members collect loot at most this far from their leader
 BETRAYAL_CHANCE_PER_MINUTE = 0.3  # for a member with aggression 1 (scaled by aggression)
+ALLIANCE_AGGRESSION_BONUS = 0.2   # added to a group's chance to fight for each extra member
+ALLIANCE_SENSE_RADIUS = 150 # alliance members notice non-allies this far away (loners: VISION_RADIUS)
+ALLIANCE_RETREAT_SECONDS = 1  # alliances back off only this long after a fight (loners: RETREAT_SECONDS)
+# Tracking: an aggressive alliance heads roughly toward players it can't see yet
+TRACK_RADIUS = 350          # how far away such players can be
+TRACK_MIN_FIGHT_CHANCE = 0.6  # only groups at least this likely to fight go tracking
+TRACK_STEP = 120            # each estimated waypoint lies this far ahead
+TRACK_ANGLE_NOISE = 0.5     # max error (radians) in the estimated direction
+TRACK_UPDATE_SECONDS = 2    # the direction is re-estimated this often
 ALLIANCE_COLORS = [         # each new alliance takes the next color
     (255, 120, 120),
     (120, 230, 120),

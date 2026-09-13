@@ -7,6 +7,7 @@ import random
 from config import (
     FPS, COMBAT_RANGE, OUTCOME_WEIGHTS, ALLY_STRENGTH_SHARE, ALLY_SUPPORT_RANGE,
     ESCAPE_DROP_FRACTION, RETREAT_SECONDS, ESCAPE_BONUS, ESCAPE_MAX,
+    ALLIANCE_RETREAT_SECONDS,
 )
 from ai import stop_hunting, RESTING
 from utils import distance
@@ -98,15 +99,17 @@ def retreat(player, opponent):
     - In an alliance the whole group backs off together (members follow
       their leader), and then goes after the opponent: the leader keeps it
       as prey, and resumes the chase once the back-off is over."""
-    player.retreat_timer = RETREAT_SECONDS * FPS
     player.retreat_from = opponent
     if player.alliance is None:
+        player.retreat_timer = RETREAT_SECONDS * FPS
         stop_hunting(player, cooldown=True)
         return
 
+    # Alliances back off only briefly, then strike again
+    player.retreat_timer = ALLIANCE_RETREAT_SECONDS * FPS
     stop_hunting(player)
     leader = player.alliance.leader
-    leader.retreat_timer = max(leader.retreat_timer, RETREAT_SECONDS * FPS)
+    leader.retreat_timer = max(leader.retreat_timer, ALLIANCE_RETREAT_SECONDS * FPS)
     leader.retreat_from = opponent
     leader.prey = opponent
     leader.prey_last_seen = (opponent.x, opponent.y)

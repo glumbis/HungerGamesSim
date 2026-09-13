@@ -13,7 +13,8 @@ from config import (
     WEAPON_FEAR_FACTOR, HUNT_GIVE_UP_SECONDS, HUNT_COOLDOWN_SECONDS,
     RETREAT_DISTANCE, FOLLOW_SPREAD, FOLLOW_LEASH,
     EXPLORE_CELL_SIZE, EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX, SHELTER_WALL_MARGIN,
-    STALK_DISTANCE,
+    STALK_DISTANCE, ALLIANCE_SENSE_RADIUS, ALLIANCE_AGGRESSION_BONUS,
+    TRACK_RADIUS, TRACK_STEP, TRACK_ANGLE_NOISE, TRACK_UPDATE_SECONDS, TRACK_MIN_FIGHT_CHANCE,
 )
 from utils import distance, angle_to
 
@@ -28,6 +29,7 @@ HUNTING = "HUNTING"             # chasing a visible player to attack it
 AVOIDING = "AVOIDING"           # moving away from another player
 GATHERING = "GATHERING"         # no urgent need; collecting visible loot
 FOLLOWING = "FOLLOWING"         # alliance member staying near its leader
+TRACKING = "TRACKING"           # aggressive alliance heading roughly toward unseen players
 EXPLORING = "EXPLORING"         # nothing urgent: heading for unvisited parts of the arena
 
 # Dot color for each state in the debug view
@@ -42,6 +44,7 @@ STATE_COLORS = {
     AVOIDING: (170, 120, 70),       # brown
     GATHERING: (80, 210, 210),      # cyan
     FOLLOWING: (200, 160, 255),     # lavender
+    TRACKING: (255, 130, 90),       # coral
     EXPLORING: (220, 220, 220),     # white
 }
 
@@ -182,10 +185,13 @@ def look_around(player, arena, players):
             player.known_loot.discard(item)
 
     player.visible_loot = visible_loot
+    # Alliance members keep watch for each other, so they notice other
+    # players from further away than a player on its own would
+    radius = ALLIANCE_SENSE_RADIUS if player.alliance is not None else VISION_RADIUS
     player.visible_players = [
         other for other in players
         if other is not player and other.alive and not is_ally(player, other)
-        and distance(player.x, player.y, other.x, other.y) <= VISION_RADIUS
+        and distance(player.x, player.y, other.x, other.y) <= radius
     ]
 
 
@@ -254,17 +260,24 @@ def most_urgent_need(members, resting):
     return min(urgent, key=urgent.get)  # the key with the smallest value
 
 
+def fight_chance(player, other=None):
+    """How likely `player` (or the alliance it leads) is to choose a fight:
+    its aggression, plus a bonus for every extra alliance member, lowered if
+    `other` is armed and nobody in the group is. Never more than 1."""
+    group = player.alliance.members if player.alliance else [player]
+    chance = player.aggression + ALLIANCE_AGGRESSION_BONUS * (len(group) - 1)
+    group_armed = any(member.inventory["weapon"] > 0 for member in group)
+    if other is not None and other.inventory["weapon"] > 0 and not group_armed:
+        chance *= WEAPON_FEAR_FACTOR  # wary of an armed opponent
+    return min(chance, 1.0)
+
+
 def choose_reaction(player, other):
     """Decide once whether to fight or avoid a player that just came into
     sight. A sleeping player is always attacked."""
     if other.state == RESTING:
         return FIGHT
-    fight_chance = player.aggression
-    group = player.alliance.members if player.alliance else [player]
-    group_armed = any(member.inventory["weapon"] > 0 for member in group)
-    if other.inventory["weapon"] > 0 and not group_armed:
-        fight_chance *= WEAPON_FEAR_FACTOR  # wary of an armed opponent
-    return FIGHT if random.random() < fight_chance else AVOID
+    return FIGHT if random.random() < fight_chance(player, other) else AVOID
 
 
 def stop_hunting(player, cooldown=False):
@@ -278,10 +291,11 @@ def stop_hunting(player, cooldown=False):
 
 
 def chase_target(player, prey):
-    """Where a hunter heads. Prey that has only just fought can't be attacked
-    yet, so the hunter waits close by (None = stand still) instead of
-    standing right on top of it."""
-    if prey.retreat_timer > 0 and distance(player.x, player.y, prey.x, prey.y) < STALK_DISTANCE:
+    """Where a hunter heads. If the hunter or its prey has only just fought,
+    no new fight can start yet, so the hunter waits close by (None = stand
+    still) instead of standing right on top of the prey."""
+    if (prey.retreat_timer > 0 or player.retreat_timer > 0) and \
+            distance(player.x, player.y, prey.x, prey.y) < STALK_DISTANCE:
         return None
     return (prey.x, prey.y)
 
@@ -317,6 +331,15 @@ def hunt(player, visible_players):
     return False
 
 
+def face_to_face(player, other):
+    """True if `player`, or anyone in its alliance, is within normal vision
+    of `other`. Alliances are only offered face to face — not to players an
+    alliance merely noticed from further away."""
+    group = player.alliance.members if player.alliance else [player]
+    return any(distance(member.x, member.y, other.x, other.y) <= VISION_RADIUS
+               for member in group)
+
+
 def react_to_players(player, visible_players, need):
     """Every non-allied player in sight is allied with, fought or avoided.
     Called for players on their own and for alliance leaders. Returns True
@@ -328,7 +351,8 @@ def react_to_players(player, visible_players, need):
     for other in visible_players:
         if other not in player.reactions:
             # First sighting: maybe team up, otherwise choose fight or avoid
-            if other.state != RESTING and alliances.try_to_ally(player, other):
+            if other.state != RESTING and face_to_face(player, other) \
+                    and alliances.try_to_ally(player, other):
                 return True  # the groups changed; decide again next frame
             player.reactions[other] = choose_reaction(player, other)
         elif other.state == RESTING:
@@ -374,6 +398,41 @@ def react_to_players(player, visible_players, need):
     return False
 
 
+def track(leader, players):
+    """An aggressive alliance heads roughly toward the nearest non-ally
+    within TRACK_RADIUS, even one it can't see. It doesn't know exactly
+    where that player is, so it aims in an estimated direction (with random
+    error) and re-estimates every few seconds. Returns True if tracking."""
+    if fight_chance(leader) < TRACK_MIN_FIGHT_CHANCE:
+        return False
+    candidates = [other for other in players
+                  if other.alive and not is_ally(leader, other)
+                  and distance(leader.x, leader.y, other.x, other.y) <= TRACK_RADIUS]
+    quarry = nearest(leader, candidates)
+    if quarry is None:
+        return False
+
+    if leader.state != TRACKING:
+        leader.track_point = None  # just started: estimate a fresh direction
+    leader.track_timer -= 1
+    arrived = leader.track_point is not None and \
+        distance(leader.x, leader.y, *leader.track_point) < ARRIVE_DISTANCE
+    if leader.track_point is None or leader.track_timer <= 0 or arrived:
+        direction = angle_to(leader.x, leader.y, quarry.x, quarry.y)
+        direction += random.uniform(-TRACK_ANGLE_NOISE, TRACK_ANGLE_NOISE)
+        step = min(TRACK_STEP, distance(leader.x, leader.y, quarry.x, quarry.y))
+        leader.track_point = clamp_to_arena(
+            leader.x + math.cos(direction) * step,
+            leader.y + math.sin(direction) * step,
+            ARRIVE_DISTANCE,
+        )
+        leader.track_timer = TRACK_UPDATE_SECONDS * FPS
+
+    set_state(leader, TRACKING)
+    leader.target = leader.track_point
+    return True
+
+
 def follow_leader(player):
     """Alliance members don't make their own plans: they join the leader's
     hunts, sleep when it sleeps, and otherwise stay close to it."""
@@ -398,7 +457,7 @@ def follow_leader(player):
         return
 
     # Collect loot close to the leader, unless the group is busy
-    if leader.state not in (RESTING, SHELTERING, HUNTING, AVOIDING):
+    if leader.state not in (RESTING, SHELTERING, HUNTING, AVOIDING, TRACKING):
         wanted = [item for item in player.visible_loot
                   if player.can_carry(item.kind)
                   and distance(item.x, item.y, leader.x, leader.y) <= FOLLOW_LEASH]
@@ -528,5 +587,9 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 7. Nothing urgent: explore
+    # 7. An aggressive alliance heads toward players it can't see yet
+    if player.alliance is not None and track(player, players):
+        return
+
+    # 8. Nothing urgent: explore
     explore(player)

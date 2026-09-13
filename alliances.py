@@ -3,6 +3,7 @@ has a leader who decides what the whole group does (see ai.py); the other
 members loosely follow it."""
 import random
 
+import events
 from config import (
     FPS, LOOT_RESTORES, LOOT_USE_THRESHOLD,
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLY_SHARE_RANGE, FOLLOW_SPREAD,
@@ -73,6 +74,8 @@ def try_to_ally(player, other):
         return False  # two alliances never merge
     if other in player.former_allies:
         return False  # no second chances
+    if other in player.alliance_rolls:
+        return False  # each pair of players gets one chance per game
 
     # `or` gives the first of the two that is not None
     group = player.alliance or other.alliance
@@ -81,6 +84,10 @@ def try_to_ally(player, other):
 
     # Each side's willingness is 1 - aggression; an alliance answers
     # through its leader
+    # Remember that this pair has now had its chance (whatever the outcome)
+    player.alliance_rolls.add(other)
+    other.alliance_rolls.add(player)
+
     other_side = other.alliance.leader if other.alliance else other
     chance = ALLIANCE_CHANCE * (1 - player.aggression) * (1 - other_side.aggression)
     if random.random() >= chance:
@@ -88,12 +95,12 @@ def try_to_ally(player, other):
 
     if group is None:
         alliance = Alliance(player, other)
-        print(f"Alliance formed: Players {alliance.ids()} "
+        events.log(f"Alliance formed: Players {alliance.ids()} "
               f"(leader: Player {alliance.leader.id}).")
     else:
         newcomer = other if group is player.alliance else player
         group.add(newcomer)
-        print(f"Player {newcomer.id} joined the alliance led by Player "
+        events.log(f"Player {newcomer.id} joined the alliance led by Player "
               f"{group.leader.id} (members: {group.ids()}).")
     return True
 
@@ -116,7 +123,7 @@ def share_supplies(players):
 
 
 def disband(alliance, reason):
-    print(f"The alliance of Players {alliance.ids()} broke up ({reason}).")
+    events.log(f"The alliance of Players {alliance.ids()} broke up ({reason}).")
     for member in list(alliance.members):  # copy: remove() changes the list
         alliance.remove(member)
 
@@ -130,13 +137,13 @@ def betray(player):
     player.prey = victim
     player.prey_last_seen = (victim.x, victim.y)
     player.hunt_timer = 0
-    print(f"Player {player.id} betrayed the alliance and turned on Player {victim.id}!")
+    events.log(f"Player {player.id} betrayed the alliance and turned on Player {victim.id}!")
 
     if len(alliance.members) < 2:
         disband(alliance, "betrayal")
     elif alliance.leader is player:
         alliance.choose_new_leader()
-        print(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
+        events.log(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
 
 
 def update_alliances(players):
@@ -149,7 +156,7 @@ def update_alliances(players):
             disband(alliance, "too few members left")
         elif not alliance.leader.alive:
             alliance.choose_new_leader()
-            print(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
+            events.log(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
 
     # Betrayal: a small chance every frame, higher for aggressive members
     for player in players:

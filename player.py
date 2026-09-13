@@ -58,6 +58,8 @@ class Player:
         self.visited_cells = set()  # arena cells (column, row) this player has been in
         self.pause_timer = 0        # frames left standing still to look around
         self.rest_spot = None       # (x, y) by a wall where it intends to sleep
+        self.track_point = None     # estimated waypoint toward an unseen player (leaders)
+        self.track_timer = 0        # frames until that direction is re-estimated
         self.known_loot = set()     # loot items this player has seen
         self.reactions = {}         # other player in sight -> "fight" or "avoid"
         self.prey = None            # the player being hunted, if any
@@ -75,6 +77,7 @@ class Player:
         # Alliances (set and used by alliances.py and ai.py)
         self.alliance = None        # the Alliance this player belongs to, if any
         self.former_allies = set()  # players it will never ally with again
+        self.alliance_rolls = set() # players it has already had its one chance to ally with
         self.follow_offset = (0, 0) # this member's spot relative to its leader
         self.visible_loot = []      # what it saw this frame (read by its leader)
         self.visible_players = []

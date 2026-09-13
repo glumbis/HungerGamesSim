@@ -118,14 +118,35 @@ the next step onward.)
   14–15 px; 45–64 fights per run, 66–85% with ally support; combat causes
   ~30% of deaths, thirst ~50%.
 
-Nothing beyond this (remaining enhancements) is implemented yet.
+- **Alliance tuning, tracking and event feed** — alliance chance =
+  0.2 × (1 − own aggression) × (1 − other side's aggression), offered only
+  face to face (a group member within 80 px of the other player) and only
+  once per pair of players per game. A group's fight chance = leader
+  aggression + 0.2 per extra member (halved against an armed opponent if
+  nobody in the group is armed). Alliance members notice non-allies within
+  150 px (loners: 80 px). Alliances back off only 1 s after a fight
+  (loners: 3 s). Hunters wait 20 px away while either side is still backing
+  off. `TRACKING`: an alliance with fight chance ≥ 0.6 heads toward the
+  nearest non-ally within 350 px via estimated waypoints (120 px ahead,
+  ±0.5 rad error, re-estimated every 2 s). Fight outcome weights:
+  elimination 75%, standoff 10%, mutual loss 15%; escape bonus 0.05.
+  `events.py`: on-screen feed in the bottom-left corner (newest 6 events,
+  10 s each, fading out) of deaths, eliminations, alliance events and the
+  winner, with simulation timestamps; detailed fight lines stay in the
+  terminal. Measured over 5 seeds: 3–9 alliance events per run, 22–32% of
+  player time spent in alliances, `HUNTING` 8–13% of time, combat causes
+  20–23 of 24 deaths, games end between 2:00 and 3:53.
+
+Nothing beyond this (simulation speed control, post-run summary) is
+implemented yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
 durations are deliberately fast so test runs are short. Lower them once
 the simulation speed control enhancement exists, so viewing speed and
-testing speed can differ. Combat currently causes roughly 60–85% of
-deaths (5 test seeds, escape bonus 0.2); `ESCAPE_BONUS` and
-`OUTCOME_WEIGHTS` in `config.py` are the main levers if that is too high.
+testing speed can differ. Combat currently causes 20–23 of 24
+deaths (5 test seeds, escape bonus 0.05) — about the level once judged to
+be too many fights. `ESCAPE_BONUS`, `OUTCOME_WEIGHTS` and
+`ALLIANCE_RETREAT_SECONDS` in `config.py` are the main levers.
 
 ## Architecture
 
@@ -141,6 +162,7 @@ still empty:
 | `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
 | `alliances.py` | Implemented | `Alliance` class (members, leader, color), forming/joining, supply sharing, betrayal, breakups. |
+| `events.py` | Implemented | Event feed: `log()` prints and stores timestamped events, `update()` expires them, `draw()` shows them bottom-left. |
 | `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
@@ -222,25 +244,35 @@ making independent decisions.
 4. ~~Combat resolution (`combat.py`).~~ Done, including `HUNTING`/`AVOIDING`.
 5. ~~Alliances, layered on top of AI and combat.~~ Done (leader-based — see
    "Alliance structure" above).
-6. Remaining enhancements: elimination feed, visual state indicators (may
-   fold into steps 1 and 3), simulation speed control, post-run summary.
+6. Remaining enhancements: ~~elimination feed~~ (done, `events.py`),
+   ~~visual state indicators~~ (done: warning dots, alliance colors, leader
+   rings, debug view), simulation speed control, post-run summary.
 
 Each step has been built and confirmed visually before moving to the next —
 that pattern should continue.
 
 ## Requested changes for next session
 
-Feedback on the alliance unity / movement version (not yet implemented):
+Feedback on the alliance tuning / event feed version (not yet implemented):
 
-1. **Fewer alliances** — alliances form too often.
-2. **More aggressive alliances** — groups should pick fights more readily.
-3. **Deadlier fights** — more fights should end in elimination.
-4. **No ignoring between nearby alliances** — alliances are sometimes
-   close to each other but ignore each other. Remove this: nearby
-   alliances must fight or avoid.
-5. **Hunting beyond vision** — alliances should be able to move in the
-   general direction of players to hunt, even when those players are
-   outside their vision radius.
+1. **Endgame showdown** — when only a few players are left, they seek each
+   other out and fight to the death (no more avoiding or waiting it out).
+2. **Simulation speed control** — adjustable speed (the accepted
+   enhancement: pause / faster / slower).
+3. **Faster needs** — hunger, thirst and sleep should drop a little faster.
+4. **Fixed personality traits for players and alliances** — replace the
+   single random `aggression` value with decided traits that shape
+   behavior, to mimic Hunger Games personalities more closely. Examples:
+   some alliances always want to kill; some players are always afraid
+   (always avoid), others always kill; some stay close to the edge, others
+   explore widely. Rework other systems around the traits where needed
+   (fight/avoid choice, alliance forming and group behavior, tracking,
+   exploring, sheltering, the opening rush/flee).
+
+The previous round of requests (fewer alliances, more aggressive alliances,
+deadlier fights, no ignoring between nearby alliances, hunting beyond
+vision) is implemented — see "Alliance tuning, tracking and event feed"
+under Current status.
 
 ## Working style
 

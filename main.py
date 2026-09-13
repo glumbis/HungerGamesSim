@@ -10,6 +10,7 @@ from arena import Arena
 import ai
 import alliances
 import combat
+import events
 
 
 def create_starting_players():
@@ -73,6 +74,7 @@ def main():
         # Hunters that have reached their prey fight
         combat.handle_fights(players, arena)
         arena.update_flashes()
+        events.update()
 
         # Remove players who died this frame. `survivors` is a new list
         # containing only the living players; it replaces the old list.
@@ -83,7 +85,7 @@ def main():
                     how = f"was eliminated by Player {player.killer_id}"
                 else:
                     how = f"died of {player.cause_of_death}"
-                print(f"Player {player.id} {how}. {len(survivors)} remaining.")
+                events.log(f"Player {player.id} {how}. {len(survivors)} remaining.")
         players = survivors
 
         # Remove dead members, replace dead leaders, handle betrayals
@@ -93,9 +95,9 @@ def main():
             game_over = True
             if players:
                 winner = players[0]
-                print(f"Player {winner.id} is the last one standing, with {winner.kills} kill(s).")
+                events.log(f"Player {winner.id} is the last one standing, with {winner.kills} kill(s).")
             else:
-                print("No survivors.")
+                events.log("No survivors.")
 
         # Living players pick up any loot they are touching
         arena.handle_pickups(players)
@@ -122,6 +124,7 @@ def main():
             player.draw(screen, debug)
         if debug:
             draw_legend(screen, font)
+        events.draw(screen, font)
         pygame.display.flip()
 
         clock.tick(FPS)
