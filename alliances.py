@@ -7,7 +7,7 @@ import events
 from config import (
     FPS, LOOT_RESTORES, LOOT_USE_THRESHOLD,
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLY_SHARE_RANGE, FOLLOW_SPREAD,
-    BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS,
+    BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS, ALLIANCE_WILLINGNESS, SHOWDOWN_PLAYERS,
 )
 from utils import distance
 
@@ -24,6 +24,27 @@ def forget_prey(player):
     player.hunt_timer = 0
 
 
+def willingness(player):
+    """How willing a player is to team up (0-1). Killers and cowards have a
+    fixed value (ALLIANCE_WILLINGNESS); for balanced players it is higher
+    the less aggressive they are. .get(key, default) returns the default
+    when the key is missing."""
+    return ALLIANCE_WILLINGNESS.get(player.temperament, 1 - player.aggression)
+
+
+def choose_style(first, second):
+    """An alliance's fixed style comes from its two founders:
+    - a killer among them -> "bloodthirsty" (always fights)
+    - two cowards         -> "defensive" (always avoids, but defends its members)
+    - anything else       -> "opportunist" (decides fight by fight)"""
+    temperaments = {first.temperament, second.temperament}  # a set: duplicates collapse
+    if "killer" in temperaments:
+        return "bloodthirsty"
+    if temperaments == {"coward"}:
+        return "defensive"
+    return "opportunist"
+
+
 class Alliance:
     created = 0  # alliances created so far; used to give each its own color
 
@@ -32,6 +53,7 @@ class Alliance:
         self.color = ALLIANCE_COLORS[Alliance.created % len(ALLIANCE_COLORS)]
         Alliance.created += 1
         self.leader = None
+        self.style = choose_style(first, second)
         self.add(first)
         self.add(second)
         self.choose_new_leader()
@@ -89,13 +111,13 @@ def try_to_ally(player, other):
     other.alliance_rolls.add(player)
 
     other_side = other.alliance.leader if other.alliance else other
-    chance = ALLIANCE_CHANCE * (1 - player.aggression) * (1 - other_side.aggression)
+    chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
     if random.random() >= chance:
         return False
 
     if group is None:
         alliance = Alliance(player, other)
-        events.log(f"Alliance formed: Players {alliance.ids()} "
+        events.log(f"{alliance.style.capitalize()} alliance formed: Players {alliance.ids()} "
               f"(leader: Player {alliance.leader.id}).")
     else:
         newcomer = other if group is player.alliance else player
@@ -148,6 +170,12 @@ def betray(player):
 
 def update_alliances(players):
     """Call once per frame, after dead players have been removed."""
+    # Showdown: with only a few players left, every alliance breaks up
+    if len(players) <= SHOWDOWN_PLAYERS:
+        for alliance in {player.alliance for player in players if player.alliance is not None}:
+            disband(alliance, "the showdown has begun")
+        return
+
     # Tidy up alliances that lost members. {... for ...} is a set
     # comprehension: it collects each alliance only once.
     for alliance in {player.alliance for player in players if player.alliance is not None}:

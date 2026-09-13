@@ -7,7 +7,7 @@ import random
 from config import (
     FPS, COMBAT_RANGE, OUTCOME_WEIGHTS, ALLY_STRENGTH_SHARE, ALLY_SUPPORT_RANGE,
     ESCAPE_DROP_FRACTION, RETREAT_SECONDS, ESCAPE_BONUS, ESCAPE_MAX,
-    ALLIANCE_RETREAT_SECONDS,
+    ALLIANCE_RETREAT_SECONDS, SHOWDOWN_PLAYERS,
 )
 from ai import stop_hunting, RESTING
 from utils import distance
@@ -32,6 +32,7 @@ def effective_strength(player):
 
 def handle_fights(players, arena):
     """Start a fight wherever a hunter has reached its prey."""
+    showdown = len(players) <= SHOWDOWN_PLAYERS  # endgame: fights are to the death
     for attacker in players:
         defender = attacker.prey
         if defender is None or not attacker.alive or not defender.alive:
@@ -39,10 +40,10 @@ def handle_fights(players, arena):
         if attacker.retreat_timer > 0 or defender.retreat_timer > 0:
             continue  # one of them has only just fought
         if distance(attacker.x, attacker.y, defender.x, defender.y) <= COMBAT_RANGE:
-            fight(attacker, defender, arena)
+            fight(attacker, defender, arena, showdown)
 
 
-def fight(attacker, defender, arena):
+def fight(attacker, defender, arena, showdown=False):
     strength_a = effective_strength(attacker)
     strength_d = effective_strength(defender)
     arena.add_flash((attacker.x + defender.x) / 2, (attacker.y + defender.y) / 2)
@@ -58,6 +59,8 @@ def fight(attacker, defender, arena):
     outcome = random.choices(
         list(OUTCOME_WEIGHTS), weights=list(OUTCOME_WEIGHTS.values())
     )[0]
+    if showdown:
+        outcome = ELIMINATION  # in the showdown every fight is to the death
 
     summary = (f"Fight: Player {attacker.id} (str {strength_a:.1f}) attacked "
                f"Player {defender.id} (str {strength_d:.1f}) -> ")
@@ -67,6 +70,8 @@ def fight(attacker, defender, arena):
         # winner, the better its chance
         escape_chance = loser.speed / (loser.speed + winner.speed) + ESCAPE_BONUS
         escape_chance = min(escape_chance, ESCAPE_MAX)
+        if showdown:
+            escape_chance = 0  # ...and nobody escapes
         if random.random() < escape_chance:
             drop_items(loser, arena, ESCAPE_DROP_FRACTION)
             retreat(winner, loser)

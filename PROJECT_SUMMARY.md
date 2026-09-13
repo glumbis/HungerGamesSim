@@ -137,14 +137,38 @@ the next step onward.)
   player time spent in alliances, `HUNTING` 8–13% of time, combat causes
   20–23 of 24 deaths, games end between 2:00 and 3:53.
 
-Nothing beyond this (simulation speed control, post-run summary) is
-implemented yet.
+- **Personality traits, alliance styles, showdown, speed control** — each
+  player gets a fixed `temperament` (killer 20% / balanced 55% / coward
+  25%; aggression drawn from 0.8–1 / 0.2–0.8 / 0–0.2) and `roaming` (edge
+  25% / normal 50% / explorer 25%). Killers always rush at the start,
+  always choose to fight (even armed opponents) and track unseen players.
+  Cowards always flee at the start and always avoid; they still attack
+  sleeping players, but go back to avoiding once those wake. Balanced
+  players use the aggression-based rules. Edge dwellers flee to the wall
+  and explore points 25–70 px from walls; explorers pick any unvisited
+  cell and pause 40% as long; searching for food/water always looks
+  nearby. Willingness to ally: killers 0.3, cowards 1.0, balanced
+  1 − aggression. Alliance `style` is set by the founders: a killer →
+  bloodthirsty (always fights, tracks); two cowards → defensive (always
+  avoids, still defends members); otherwise opportunist. Showdown at ≤ 4
+  players left: alliances disband, everyone hunts the nearest player with
+  full knowledge of positions, and every fight is an elimination with no
+  escape. `main.py` now has a `Simulation` class; Space pauses and Up/Down
+  set 0.25×–8× (simulation steps per frame), shown top-right. Needs ~13%
+  faster (hunger 65 s, thirst 52 s, sleep 78 s). Traits are printed to the
+  terminal at the start. Measured over 5 seeds: showdown at 1:28–1:51,
+  games end at 1:31–1:52, combat causes 19–23 of 24 deaths, edge dwellers
+  explore at a median 52–68 px from the nearest wall vs 114–188 px for
+  others.
+
+Nothing beyond this (post-run summary) is implemented yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
-durations are deliberately fast so test runs are short. Lower them once
-the simulation speed control enhancement exists, so viewing speed and
-testing speed can differ. Combat currently causes 20–23 of 24
-deaths (5 test seeds, escape bonus 0.05) — about the level once judged to
+durations are deliberately fast so test runs are short. Speed control now
+exists (Space / Up / Down), so these can be lowered for viewing without
+slowing down testing. Needs were made ~13% faster on request; games
+currently end at about 1:30–1:50. Combat currently causes 19–23 of 24
+deaths (5 test seeds, escape bonus 0.05, with traits) — about the level once judged to
 be too many fights. `ESCAPE_BONUS`, `OUTCOME_WEIGHTS` and
 `ALLIANCE_RETREAT_SECONDS` in `config.py` are the main levers.
 
@@ -156,8 +180,8 @@ still empty:
 | File | Status | Responsibility |
 |---|---|---|
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Alliance fields (`alliance`, `former_allies`, `follow_offset`, `visible_loot`, `visible_players`), `fighting_strength()`, `current_speed()`. |
-| `main.py` | Implemented | Entry point: pygame init, game loop (handle events → update → draw → clock tick), `create_starting_players()` for the circle formation. |
+| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Alliance fields (`alliance`, `former_allies`, `follow_offset`, `visible_loot`, `visible_players`), `fighting_strength()`, `current_speed()`, traits (`temperament`, `roaming`), exploring/tracking fields. |
+| `main.py` | Implemented | Entry point: `create_starting_players()` (circle formation), `Simulation` class (`step()` advances the world one tick), drawing (`draw()`, legend, HUD), and the main loop with pause/speed keys. |
 | `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
@@ -246,33 +270,31 @@ making independent decisions.
    "Alliance structure" above).
 6. Remaining enhancements: ~~elimination feed~~ (done, `events.py`),
    ~~visual state indicators~~ (done: warning dots, alliance colors, leader
-   rings, debug view), simulation speed control, post-run summary.
+   rings, debug view), ~~simulation speed control~~ (done), post-run summary.
 
 Each step has been built and confirmed visually before moving to the next —
 that pattern should continue.
 
 ## Requested changes for next session
 
-Feedback on the alliance tuning / event feed version (not yet implemented):
+Feedback on the traits / showdown / speed control version (not yet
+implemented):
 
-1. **Endgame showdown** — when only a few players are left, they seek each
-   other out and fight to the death (no more avoiding or waiting it out).
-2. **Simulation speed control** — adjustable speed (the accepted
-   enhancement: pause / faster / slower).
-3. **Faster needs** — hunger, thirst and sleep should drop a little faster.
-4. **Fixed personality traits for players and alliances** — replace the
-   single random `aggression` value with decided traits that shape
-   behavior, to mimic Hunger Games personalities more closely. Examples:
-   some alliances always want to kill; some players are always afraid
-   (always avoid), others always kill; some stay close to the edge, others
-   explore widely. Rework other systems around the traits where needed
-   (fight/avoid choice, alliance forming and group behavior, tracking,
-   exploring, sheltering, the opening rush/flee).
+1. **Make the arena feel bigger** — it currently feels like a football
+   field rather than a large Hunger Games arena. (Ideas to evaluate, not
+   yet agreed: a world larger than the window with a camera or zoom;
+   smaller sprites and slower movement relative to the map; terrain or
+   landmarks that give a sense of scale.)
+2. **A clearer, more dramatic start** — the opening should resemble the
+   Hunger Games: a clearly visible cornucopia in the center with a chaotic
+   bloodbath around it, while others scatter. Currently some players
+   scatter and some go to the middle, but it does not read as a
+   cornucopia.
 
-The previous round of requests (fewer alliances, more aggressive alliances,
-deadlier fights, no ignoring between nearby alliances, hunting beyond
-vision) is implemented — see "Alliance tuning, tracking and event feed"
-under Current status.
+Previous rounds are implemented — endgame showdown, speed control, faster
+needs and fixed personality traits (see "Personality traits, alliance
+styles, showdown, speed control" under Current status), and before that
+the alliance tuning, tracking and event feed.
 
 ## Working style
 

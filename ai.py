@@ -15,6 +15,7 @@ from config import (
     EXPLORE_CELL_SIZE, EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX, SHELTER_WALL_MARGIN,
     STALK_DISTANCE, ALLIANCE_SENSE_RADIUS, ALLIANCE_AGGRESSION_BONUS,
     TRACK_RADIUS, TRACK_STEP, TRACK_ANGLE_NOISE, TRACK_UPDATE_SECONDS, TRACK_MIN_FIGHT_CHANCE,
+    EXPLORER_PAUSE_FACTOR, SHOWDOWN_PLAYERS, EDGE_BAND,
 )
 from utils import distance, angle_to
 
@@ -89,17 +90,25 @@ def cell_of(x, y):
     return int(x // EXPLORE_CELL_SIZE), int(y // EXPLORE_CELL_SIZE)
 
 
-def choose_explore_point(player):
-    """A random point in one of the three nearest cells this player has not
-    visited yet. Once every cell has been visited, it starts over."""
+def choose_explore_point(player, roaming=None):
+    """A random point in a cell this player has not visited yet. Which cells
+    count depends on its roaming trait (or on `roaming`, if given):
+    - "edge": only cells along the arena walls, one of the three nearest
+    - "explorer": any unvisited cell, however far away
+    - "normal": one of the three nearest unvisited cells
+    Once every candidate cell has been visited, it starts over."""
+    roaming = roaming or player.roaming  # `or`: use player.roaming if roaming is None
     cols = math.ceil(SCREEN_WIDTH / EXPLORE_CELL_SIZE)
     rows = math.ceil(SCREEN_HEIGHT / EXPLORE_CELL_SIZE)
-    unvisited = [(col, row) for col in range(cols) for row in range(rows)
-                 if (col, row) not in player.visited_cells]
+    candidates = [(col, row) for col in range(cols) for row in range(rows)]
+    if roaming == "edge":
+        candidates = [(col, row) for col, row in candidates
+                      if col in (0, cols - 1) or row in (0, rows - 1)]
+    unvisited = [cell for cell in candidates if cell not in player.visited_cells]
     if not unvisited:
-        player.visited_cells = {cell_of(player.x, player.y)}
-        unvisited = [(col, row) for col in range(cols) for row in range(rows)
-                     if (col, row) not in player.visited_cells]
+        # All candidates visited: forget those visits and start over
+        player.visited_cells -= set(candidates)  # -= removes these cells from the set
+        unvisited = candidates
 
     def distance_to_cell(cell):
         col, row = cell
@@ -107,10 +116,29 @@ def choose_explore_point(player):
         center_y = (row + 0.5) * EXPLORE_CELL_SIZE
         return distance(player.x, player.y, center_x, center_y)
 
-    unvisited.sort(key=distance_to_cell)  # nearest cells first
-    col, row = random.choice(unvisited[:3])
+    if roaming == "explorer":
+        col, row = random.choice(unvisited)
+    else:
+        unvisited.sort(key=distance_to_cell)  # nearest cells first
+        col, row = random.choice(unvisited[:3])
     x = random.uniform(col * EXPLORE_CELL_SIZE, (col + 1) * EXPLORE_CELL_SIZE)
     y = random.uniform(row * EXPLORE_CELL_SIZE, (row + 1) * EXPLORE_CELL_SIZE)
+
+    if roaming == "edge":
+        # Hug the wall: move the point to within EDGE_BAND of the nearest wall.
+        # The * in uniform(*EDGE_BAND) unpacks the (min, max) pair into two arguments.
+        gap = random.uniform(*EDGE_BAND)
+        walls = [(x, "left"), (SCREEN_WIDTH - x, "right"), (y, "top"), (SCREEN_HEIGHT - y, "bottom")]
+        nearest_wall = min(walls)[1]  # the smallest distance wins
+        if nearest_wall == "left":
+            x = gap
+        elif nearest_wall == "right":
+            x = SCREEN_WIDTH - gap
+        elif nearest_wall == "top":
+            y = gap
+        else:
+            y = SCREEN_HEIGHT - gap
+        return clamp_to_arena(x, y, EDGE_BAND[0])
     return clamp_to_arena(x, y, FLEE_EDGE_MARGIN)
 
 
@@ -125,7 +153,10 @@ def explore(player):
     if player.explore_point is not None and \
             distance(player.x, player.y, *player.explore_point) < ARRIVE_DISTANCE:
         player.explore_point = None
-        player.pause_timer = int(random.uniform(EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX) * FPS)
+        pause = random.uniform(EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX)
+        if player.roaming == "explorer":
+            pause *= EXPLORER_PAUSE_FACTOR  # explorers don't linger
+        player.pause_timer = int(pause * FPS)
         player.target = None
         return
     if player.explore_point is None:
@@ -148,17 +179,26 @@ def shelter_spot(player):
 
 def choose_opening_state(player, arena):
     """At the start, a player either rushes the center or flees outward.
-    The higher its aggression (0-1), the more likely it rushes."""
-    if random.random() < player.aggression:
+    Killers always rush and cowards always flee; for everyone else, the
+    higher the aggression (0-1), the more likely it rushes."""
+    if player.temperament == "killer":
+        rushes = True
+    elif player.temperament == "coward":
+        rushes = False
+    else:
+        rushes = random.random() < player.aggression
+
+    if rushes:
         set_state(player, RUSH_LOOT)
     else:
         set_state(player, FLEE_OUTWARD)
         # Aim for a point roughly away from the center (with a little random
-        # variation in direction), FLEE_DISTANCE from the center
+        # variation in direction). Edge dwellers run all the way to the wall.
         away = angle_to(arena.center_x, arena.center_y, player.x, player.y)
         away += random.uniform(-0.3, 0.3)
-        x = arena.center_x + math.cos(away) * FLEE_DISTANCE
-        y = arena.center_y + math.sin(away) * FLEE_DISTANCE
+        flee_distance = FLEE_DISTANCE if player.roaming != "edge" else max(SCREEN_WIDTH, SCREEN_HEIGHT)
+        x = arena.center_x + math.cos(away) * flee_distance
+        y = arena.center_y + math.sin(away) * flee_distance
         # Keep the point well clear of the walls
         player.target = clamp_to_arena(x, y, FLEE_EDGE_MARGIN)
 
@@ -261,9 +301,23 @@ def most_urgent_need(members, resting):
 
 
 def fight_chance(player, other=None):
-    """How likely `player` (or the alliance it leads) is to choose a fight:
-    its aggression, plus a bonus for every extra alliance member, lowered if
-    `other` is armed and nobody in the group is. Never more than 1."""
+    """How likely `player` (or the alliance it leads) is to choose a fight.
+    Fixed traits come first:
+    - bloodthirsty alliances and killers always fight (1.0)
+    - defensive alliances and cowards never choose to (0.0)
+    Otherwise: aggression, plus a bonus for every extra alliance member,
+    lowered if `other` is armed and nobody in the group is. Never above 1."""
+    if player.alliance is not None:
+        if player.alliance.style == "bloodthirsty":
+            return 1.0
+        if player.alliance.style == "defensive":
+            return 0.0
+    else:
+        if player.temperament == "killer":
+            return 1.0
+        if player.temperament == "coward":
+            return 0.0
+
     group = player.alliance.members if player.alliance else [player]
     chance = player.aggression + ALLIANCE_AGGRESSION_BONUS * (len(group) - 1)
     group_armed = any(member.inventory["weapon"] > 0 for member in group)
@@ -357,6 +411,12 @@ def react_to_players(player, visible_players, need):
             player.reactions[other] = choose_reaction(player, other)
         elif other.state == RESTING:
             player.reactions[other] = FIGHT  # fell asleep in sight: attack
+        elif player.reactions[other] == FIGHT and fight_chance(player, other) == 0.0:
+            # A coward (or defensive alliance) only attacks while the other
+            # sleeps: once it wakes up, go back to avoiding it
+            player.reactions[other] = AVOID
+            if player.prey is other:
+                stop_hunting(player)
 
     # An alliance defends its members: anyone in sight who is hunting one of
     # them becomes the group's target, even during a hunt cooldown
@@ -399,14 +459,15 @@ def react_to_players(player, visible_players, need):
 
 
 def track(leader, players):
-    """An aggressive alliance heads roughly toward the nearest non-ally
-    within TRACK_RADIUS, even one it can't see. It doesn't know exactly
+    """An aggressive player or alliance (killers, bloodthirsty alliances, or
+    anyone whose fight chance is high enough) heads roughly toward the
+    nearest non-ally within TRACK_RADIUS, even one it can't see. It doesn't know exactly
     where that player is, so it aims in an estimated direction (with random
     error) and re-estimates every few seconds. Returns True if tracking."""
     if fight_chance(leader) < TRACK_MIN_FIGHT_CHANCE:
         return False
     candidates = [other for other in players
-                  if other.alive and not is_ally(leader, other)
+                  if other is not leader and other.alive and not is_ally(leader, other)
                   and distance(leader.x, leader.y, other.x, other.y) <= TRACK_RADIUS]
     quarry = nearest(leader, candidates)
     if quarry is None:
@@ -484,11 +545,33 @@ def follow_leader(player):
     player.target = None
 
 
+def showdown(player, players):
+    """Endgame: with only a few players left, everyone knows where the others
+    are and goes straight for the nearest one — no avoiding, no resting."""
+    if player.retreat_timer > 0:
+        player.retreat_timer -= 1  # a back-off from before the showdown still runs out
+    others = [other for other in players if other is not player and other.alive]
+    prey = nearest(player, others)
+    if prey is None:
+        player.target = None
+        return
+    player.prey = prey
+    player.prey_last_seen = (prey.x, prey.y)
+    player.hunt_timer = 0
+    set_state(player, HUNTING)
+    player.target = chase_target(player, prey)
+
+
 def decide(player, arena, players):
     look_around(player, arena, players)
     player.state_timer += 1
     if player.hunt_cooldown > 0:
         player.hunt_cooldown -= 1
+
+    # 0. Endgame showdown: the last few players hunt each other down
+    if 1 < len(players) <= SHOWDOWN_PLAYERS:
+        showdown(player, players)
+        return
 
     # 1. Opening phase: rush or flee until done or time runs out
     if player.state == RUSH_LOOT and player.state_timer < RUSH_DURATION * FPS:
@@ -575,7 +658,8 @@ def decide(player, arena, players):
             # Nothing known: search parts of the arena not visited yet
             if player.search_point is None or distance(
                     player.x, player.y, *player.search_point) < ARRIVE_DISTANCE:
-                player.search_point = choose_explore_point(player)
+                # (searching always looks nearby, whatever the roaming trait)
+                player.search_point = choose_explore_point(player, "normal")
             player.target = player.search_point
         return
 
@@ -587,8 +671,8 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 7. An aggressive alliance heads toward players it can't see yet
-    if player.alliance is not None and track(player, players):
+    # 7. Aggressive players and alliances head toward players they can't see yet
+    if track(player, players):
         return
 
     # 8. Nothing urgent: explore

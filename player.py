@@ -14,6 +14,7 @@ from config import (
     CARRY_LIMITS, VISION_RADIUS, VISION_CIRCLE_COLOR, REST_SECONDS_TO_FULL,
     LOOT_COLORS, STRENGTH_MIN, STRENGTH_MAX,
     WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH, STATE_SPEED_MULTIPLIERS,
+    TEMPERAMENT_WEIGHTS, AGGRESSION_RANGES, ROAMING_WEIGHTS,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -49,7 +50,15 @@ class Player:
         self.inventory = {kind: 0 for kind in LOOT_COUNTS}
 
         # AI (set and used by ai.py)
-        self.aggression = random.random()  # 0 = very cautious, 1 = very aggressive
+        # Personality traits, fixed for the whole game. random.choices picks
+        # one name using the weights; [0] takes that name out of the list.
+        self.temperament = random.choices(
+            list(TEMPERAMENT_WEIGHTS), weights=list(TEMPERAMENT_WEIGHTS.values()))[0]
+        self.roaming = random.choices(
+            list(ROAMING_WEIGHTS), weights=list(ROAMING_WEIGHTS.values()))[0]
+        # Aggression (0 = very cautious, 1 = very aggressive) fits the temperament
+        low, high = AGGRESSION_RANGES[self.temperament]
+        self.aggression = random.uniform(low, high)
         self.state = None           # what the player is doing, e.g. "RESTING"
         self.state_timer = 0        # frames spent in the current state
         self.target = None          # (x, y) to head for, or None to stand still

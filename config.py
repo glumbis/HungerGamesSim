@@ -23,9 +23,9 @@ NEED_WARNING_THRESHOLD = 30 # warning dot appears below this value
 # Roughly how many seconds each need takes to drop from full to 0.
 # These are short on purpose so deaths are visible while testing.
 NEED_SECONDS_TO_EMPTY = {
-    "hunger": 75,
-    "thirst": 60,
-    "sleep": 90,
+    "hunger": 65,
+    "thirst": 52,
+    "sleep": 78,
 }
 NEED_RATE_VARIATION = 0.25  # each player's rate is up to 25% faster/slower
 
@@ -102,6 +102,36 @@ FEED_SECONDS = 10           # how long an event stays on screen
 FEED_LINE_HEIGHT = 18
 FEED_TEXT_COLOR = (235, 235, 235)
 FEED_SHADOW_COLOR = (0, 0, 0)
+
+# Personality traits (fixed for the whole game)
+TEMPERAMENT_WEIGHTS = {     # share of players with each temperament
+    "killer": 0.20,         # always rushes, always fights, tracks unseen players
+    "balanced": 0.55,       # decides fight by fight, based on aggression
+    "coward": 0.25,         # always flees at the start, always avoids
+}
+AGGRESSION_RANGES = {       # aggression (0-1) is drawn from the temperament's range
+    "killer": (0.8, 1.0),
+    "balanced": (0.2, 0.8),
+    "coward": (0.0, 0.2),
+}
+ROAMING_WEIGHTS = {         # share of players with each roaming style
+    "edge": 0.25,           # flees to the wall at the start, explores along the walls
+    "normal": 0.50,         # explores nearby unvisited areas
+    "explorer": 0.25,       # crosses the arena to far unvisited areas, short pauses
+}
+EXPLORER_PAUSE_FACTOR = 0.4 # explorers pause this fraction of the normal time
+EDGE_BAND = (25, 70)        # edge dwellers explore points this far (min, max) from the nearest wall
+ALLIANCE_WILLINGNESS = {    # fixed willingness to ally (0-1); balanced players use 1 - aggression
+    "killer": 0.3,
+    "coward": 1.0,
+}
+
+# Endgame
+SHOWDOWN_PLAYERS = 4        # with this many players left, everyone hunts everyone to the death
+
+# Simulation speed (Up/Down keys)
+SPEED_LEVELS = [0.25, 0.5, 1, 2, 4, 8]  # simulation steps per drawn frame
+HUD_TEXT_COLOR = (200, 200, 200)
 
 # Debug view (toggle with the D key)
 VISION_CIRCLE_COLOR = (55, 55, 55)
