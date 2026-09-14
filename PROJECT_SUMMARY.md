@@ -192,14 +192,44 @@ the next step onward.)
   Measured over 5 seeds: games end at 2:41–3:35, finale at 2:24–3:15,
   27–33 fights per game, 1–6 deaths from needs, longest chase ≤ 8.2 s.
 
-Nothing beyond this (post-run summary) is implemented yet.
+- **Biomes, detailed map, camera, pacing and debrief** — terrain is painted
+  at full resolution with numpy: 22 zones with wavy borders and a soft
+  blotch texture (`Arena.paint_terrain`, `terrain_at`, `find_terrain`).
+  Effects: forest halves seeing distance if either player is in it (tired
+  players look for forest to sleep in within 300 px, cowards 600 px); marsh
+  slows movement to 60% and refills thirst (thirsty players walk to marsh
+  within 700 px and are `DRINKING` until thirst reaches 90); sand drains
+  thirst 1.5× faster and extends seeing distance by 30%; rock and meadow
+  have no effect. World 2800×2100; speeds 0.45–1.15 px/frame; vision 65 px;
+  player and loot size 3 px. Exploring picks destinations at least 600 px
+  away (explorers 1000 px). Lull alerts: after 45 s without a fight,
+  aggressive loners and leaders are shown the nearest non-ally and head
+  there for up to 25 s. Fights are heard within 300 px; only players with
+  fight chance ≥ 0.7 investigate. A player backing away commits to it for
+  2 s (stops jiggling at the edge of vision). Sleep below 20 → the player
+  collapses and sleeps on the spot until 90 (no more sleep deaths). Camera:
+  follows a fight until it is decided plus 0.5 s (zoom 2.4), then chases,
+  otherwise the two closest non-allied players. Alliances: chance 0.35,
+  max 5 members; allies within 80 px add 80% of their strength. Bloodbath
+  (opening only): every fight is an elimination attempt and the escape
+  chance is multiplied by 0.15; lone rushers form a new alliance 20% of the
+  time but join an existing one 70% of the time; rush bias 0.15. General
+  escape bonus −0.20. End of game: the arena freezes, the winner's name is
+  shown for 4 s, then `debrief.py` shows stats, standings (placement,
+  district, kills, fate, time) and the scrollable event history; Enter
+  starts new Games with the same names, Esc quits. Measured over 5 seeds:
+  games end at 3:00–4:19, bloodbath 1–7 deaths, opening alliances reach
+  5 members, no sleep deaths.
+
+All planned features, including the post-run summary (the debrief), are
+implemented.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
 durations are deliberately fast so test runs are short. Speed control now
 exists (Space / Up / Down), so these can be lowered for viewing without
 slowing down testing. Needs have since been retuned (hunger 140 s,
-thirst 115 s, sleep 75 s); games currently end at about 2:40–3:35. Combat currently causes 19–23 of 24
-deaths (5 test seeds, escape bonus 0.05, with traits) — about the level once judged to
+thirst 115 s, sleep 75 s); games currently end at about 3:00–4:20. Combat currently causes about 15–21 of 24
+deaths (5 test seeds, escape bonus −0.20) — about the level once judged to
 be too many fights. `ESCAPE_BONUS`, `OUTCOME_WEIGHTS` and
 `ALLIANCE_RETREAT_SECONDS` in `config.py` are the main levers.
 
@@ -220,6 +250,7 @@ still empty:
 | `events.py` | Implemented | Event feed: `log()` prints and stores timestamped events, `update()` expires them, `draw()` shows them bottom-left. |
 | `camera.py` | Implemented | `Camera`: world↔screen conversion, zoom limits, manual control (wheel, drag, WASD, F, C), automatic focus (opening, chases, all players). |
 | `start_screen.py` | Implemented | Start screen for editing the 24 tribute names before the Games. |
+| `debrief.py` | Implemented | End-of-game debrief: winner, stats, standings, scrollable event history; Enter = new Games, Esc = quit. |
 | `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
@@ -303,29 +334,19 @@ making independent decisions.
    "Alliance structure" above).
 6. Remaining enhancements: ~~elimination feed~~ (done, `events.py`),
    ~~visual state indicators~~ (done: warning dots, alliance colors, leader
-   rings, debug view), ~~simulation speed control~~ (done), post-run summary.
+   rings, debug view), ~~simulation speed control~~ (done),
+   ~~post-run summary~~ (done, `debrief.py`).
 
 Each step has been built and confirmed visually before moving to the next —
 that pattern should continue.
 
 ## Requested changes for next session
 
-Feedback on the slower pace / names / terrain version (in progress):
-
-1. **High-resolution map.**
-2. **Biomes that do something** — terrain should affect gameplay. Specific
-   effects are to be agreed with the user before implementing.
-3. **Follow camera stays on fights** — while a fight is going on, the
-   automatic camera stays zoomed in on it.
-4. **More purposeful movement** — players keep heading in one direction
-   for longer instead of changing course often.
-5. **Bigger-feeling map and slower game** — without making games last
-   too long.
-6. **Lull alerts** — after a long period with nothing happening, aggressive
-   players learn where other players are and can hunt them down.
-
-Previous rounds are implemented (see Current status), most recently the
-slower pace, timed fights, finale, terrain areas and the start screen.
+No open requests. The most recent rounds are implemented (see "Biomes,
+detailed map, camera, pacing and debrief" under Current status). The user
+agreed that games may stay around 3–4 minutes. Biome effects that were
+offered but not chosen: rock as defensive ground (fight bonus, safer
+sleep) — only add if the user asks.
 
 ## Working style
 

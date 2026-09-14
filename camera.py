@@ -5,8 +5,8 @@ import pygame
 
 from ai import HUNTING, SEARCHING
 from config import (
-    WORLD_WIDTH, WORLD_HEIGHT,
-    CAMERA_MAX_ZOOM, CAMERA_OPENING_ZOOM, CAMERA_CHASE_ZOOM,
+    WORLD_WIDTH, WORLD_HEIGHT, FPS, CAMERA_FIGHT_LINGER_SECONDS,
+    CAMERA_MAX_ZOOM, CAMERA_OPENING_ZOOM, CAMERA_CHASE_ZOOM, CAMERA_FIGHT_ZOOM,
     CAMERA_SMOOTHING, CAMERA_PAN_SPEED, CAMERA_ZOOM_STEP,
 )
 from utils import distance
@@ -20,6 +20,8 @@ class Camera:
         self.auto = True        # True: the camera follows the action by itself
         self.dragging = False   # True while the left mouse button drags the view
         self.focus = None       # the hunter whose chase the automatic camera is following
+        self.fight = None       # the fight the automatic camera is watching
+        self.linger_frames = 0  # frames left to stay on that fight's spot after it ends
 
     # --- Converting between world and screen coordinates ----------------
 
@@ -99,22 +101,41 @@ class Camera:
         if self.auto:
             target_x, target_y, target_zoom = self.choose_focus(sim, screen)
             # Move a small share of the remaining distance each frame: fast
-            # when far away, gentle when close
-            self.x += (target_x - self.x) * CAMERA_SMOOTHING
-            self.y += (target_y - self.y) * CAMERA_SMOOTHING
-            self.zoom += (target_zoom - self.zoom) * CAMERA_SMOOTHING
+            # when far away, gentle when close. Fights are short, so get there
+            # twice as quickly.
+            smoothing = CAMERA_SMOOTHING * 2 if self.fight is not None else CAMERA_SMOOTHING
+            self.x += (target_x - self.x) * smoothing
+            self.y += (target_y - self.y) * smoothing
+            self.zoom += (target_zoom - self.zoom) * smoothing
         self.clamp(screen)
 
     def choose_focus(self, sim, screen):
         """Where the automatic camera wants to look, and how zoomed in:
         1. the cornucopia during the countdown and the bloodbath
-        2. a chase: a hunter and the player it is after, framed together.
+        2. a fight, zoomed in, until it is decided and a moment after, even if
+           another fight starts meanwhile (the camera picks the fight closest
+           to where it looks now)
+        3. a chase: a hunter and the player it is after, framed together.
            The camera sticks with one hunter while its chase lasts; when it
            needs a new one, it picks the chase closest to where it looks now.
-        3. otherwise all living players, zoomed out just enough to fit them"""
+        4. otherwise the two players closest to each other (usually the next
+           encounter), zoomed in on them"""
         arena = sim.arena
         if not sim.opening_over:
             return arena.center_x, arena.center_y, CAMERA_OPENING_ZOOM
+
+        if self.fight is not None and self.fight not in arena.fights:
+            # The fight being watched is over: stay on its spot a moment longer
+            if self.linger_frames > 0:
+                self.linger_frames -= 1
+                return self.fight.x, self.fight.y, CAMERA_FIGHT_ZOOM
+            self.fight = None
+        if self.fight is None:
+            self.fight = min(arena.fights, default=None,
+                             key=lambda fight: distance(fight.x, fight.y, self.x, self.y))
+            self.linger_frames = int(CAMERA_FIGHT_LINGER_SECONDS * FPS)
+        if self.fight is not None:
+            return self.fight.x, self.fight.y, CAMERA_FIGHT_ZOOM
         if not sim.players:
             return self.x, self.y, self.zoom
 
@@ -128,7 +149,24 @@ class Camera:
                              key=lambda hunter: distance(hunter.x, hunter.y, self.x, self.y))
         if self.focus is not None:
             return self.frame([self.focus, self.focus.prey], screen)
+        pair = self.closest_pair(sim.players)
+        if pair is not None:
+            return self.frame(list(pair), screen)
         return self.frame(sim.players, screen)
+
+    def closest_pair(self, players):
+        """The two players nearest to each other, or None if there are fewer
+        than two. Allies stick together, so an allied pair only counts if
+        there is no other pair."""
+        best, best_gap = None, float("inf")  # float("inf") = bigger than any number
+        for i, first in enumerate(players):
+            for second in players[i + 1:]:  # each pair once
+                gap = distance(first.x, first.y, second.x, second.y)
+                if first.alliance is not None and first.alliance is second.alliance:
+                    gap += 100000  # allies: only if nothing else is available
+                if gap < best_gap:
+                    best, best_gap = (first, second), gap
+        return best
 
     def frame(self, players, screen):
         """Center on a group of players, zoomed so they all fit with some

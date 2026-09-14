@@ -6,14 +6,25 @@ from config import (
 )
 
 entries = []     # events on screen, oldest first; each is [text, frames_left]
+history = []     # every event of the current game, oldest first (for the debrief)
 frame_count = 0  # frames since the start, used for the timestamps
 
 
+def reset():
+    """Forget everything, ready for a new game."""
+    global frame_count  # see update() for what `global` does
+    entries.clear()
+    history.clear()
+    frame_count = 0
+
+
 def log(text):
-    """Record an event: print it and add it to the on-screen feed."""
+    """Record an event: print it, add it to the on-screen feed and keep it
+    in the history."""
     minutes, seconds = divmod(frame_count // FPS, 60)  # divmod gives (whole minutes, leftover seconds)
     stamped = f"{minutes}:{seconds:02d}  {text}"         # :02d pads to two digits, e.g. 1:05
     print(stamped)
+    history.append(stamped)
     entries.append([stamped, FEED_SECONDS * FPS])
     del entries[:-FEED_MAX_LINES]  # keep only the newest FEED_MAX_LINES events
 

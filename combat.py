@@ -11,7 +11,7 @@ from config import (
     ESCAPE_DROP_FRACTION, RETREAT_SECONDS, ESCAPE_BONUS, ESCAPE_MAX,
     ALLIANCE_RETREAT_SECONDS, SHOWDOWN_PLAYERS,
     FIGHT_DURATION_MIN, FIGHT_DURATION_MAX, FIGHT_ALERT_RADIUS, ALERT_SECONDS,
-    TIRED_ESCAPE_FACTOR,
+    TIRED_ESCAPE_FACTOR, BLOODBATH_OUTCOME_WEIGHTS, BLOODBATH_ESCAPE_FACTOR,
 )
 from ai import stop_hunting, set_state, RESTING, FIGHTING
 from utils import distance
@@ -25,10 +25,11 @@ MUTUAL_LOSS = "MUTUAL_LOSS"
 class Fight:
     """A fight in progress between two players."""
 
-    def __init__(self, attacker, defender, to_the_death):
+    def __init__(self, attacker, defender, to_the_death, bloodbath):
         self.attacker = attacker
         self.defender = defender
         self.to_the_death = to_the_death  # True in the finale
+        self.bloodbath = bloodbath        # True if it started during the opening bloodbath
         self.x = (attacker.x + defender.x) / 2  # where the fight is happening
         self.y = (attacker.y + defender.y) / 2
         self.frames_left = int(random.uniform(FIGHT_DURATION_MIN, FIGHT_DURATION_MAX) * FPS)
@@ -69,12 +70,14 @@ def handle_fights(players, arena):
             end_fight(fight, arena)  # someone died of hunger, thirst or sleep mid-fight
         elif fight.frames_left <= 0:
             end_fight(fight, arena)
-            resolve_fight(fight.attacker, fight.defender, arena, fight.to_the_death)
+            resolve_fight(fight.attacker, fight.defender, arena, fight.to_the_death, fight.bloodbath)
 
 
 def start_fight(attacker, defender, arena, players, to_the_death):
-    fight = Fight(attacker, defender, to_the_death)
+    fight = Fight(attacker, defender, to_the_death, arena.bloodbath)
     arena.fights.append(fight)
+    arena.frames_since_fight = 0  # the arena is no longer quiet
+    arena.fights_started += 1     # for the debrief
     for fighter in (attacker, defender):
         fighter.fight = fight
         set_state(fighter, FIGHTING)
@@ -95,8 +98,9 @@ def end_fight(fight, arena):
     fight.defender.fight = None
 
 
-def resolve_fight(attacker, defender, arena, to_the_death):
-    """Decide how a finished fight turned out."""
+def resolve_fight(attacker, defender, arena, to_the_death, bloodbath):
+    """Decide how a finished fight turned out. Bloodbath fights (started during
+    the opening) are deadlier: other outcome weights and fewer escapes."""
     strength_a = effective_strength(attacker)
     strength_d = effective_strength(defender)
     arena.add_flash((attacker.x + defender.x) / 2, (attacker.y + defender.y) / 2)
@@ -109,9 +113,8 @@ def resolve_fight(attacker, defender, arena, to_the_death):
 
     # Which kind of outcome: random.choices picks one name, using the weights
     # (it returns a list, so [0] takes the single pick out of it)
-    outcome = random.choices(
-        list(OUTCOME_WEIGHTS), weights=list(OUTCOME_WEIGHTS.values())
-    )[0]
+    weights = BLOODBATH_OUTCOME_WEIGHTS if bloodbath else OUTCOME_WEIGHTS
+    outcome = random.choices(list(weights), weights=list(weights.values()))[0]
     if to_the_death:
         outcome = ELIMINATION  # in the finale every fight is to the death
 
@@ -125,6 +128,8 @@ def resolve_fight(attacker, defender, arena, to_the_death):
         escape_chance = loser.speed / (loser.speed + winner.speed) + ESCAPE_BONUS
         escape_chance = max(0.0, min(escape_chance, ESCAPE_MAX))
         escape_chance *= TIRED_ESCAPE_FACTOR + (1 - TIRED_ESCAPE_FACTOR) * loser.stamina
+        if bloodbath:
+            escape_chance *= BLOODBATH_ESCAPE_FACTOR  # hard to get away in the chaos
         if to_the_death:
             escape_chance = 0  # ...and in the finale nobody escapes
         if random.random() < escape_chance:

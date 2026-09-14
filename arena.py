@@ -1,16 +1,19 @@
 import math
 import random
 
+import numpy as np
 import pygame
 from config import (
     WORLD_WIDTH, WORLD_HEIGHT, PLAYER_RADIUS, FPS, NUM_PLAYERS, START_CIRCLE_RADIUS,
     ITEM_DROP_SCATTER, FIGHT_FLASH_SECONDS, FIGHT_FLASH_COLOR, FIGHT_FLASH_RADIUS, FIGHT_RING_COLOR,
     LOOT_COUNTS, LOOT_CENTER_FRACTION, LOOT_CENTER_SPREAD, LOOT_SIZE, LOOT_COLORS,
     CORNUCOPIA_SIZE, CORNUCOPIA_COLOR, CORNUCOPIA_OUTLINE_COLOR, PLATE_RADIUS, PLATE_COLOR,
-    TERRAIN_COLORS, TERRAIN_WEIGHTS, TERRAIN_ZONES, TERRAIN_CELL, TERRAIN_CLEAR_RADIUS,
+    TERRAIN_COLORS, TERRAIN_WEIGHTS, TERRAIN_ZONES, TERRAIN_WARP, TERRAIN_CLEAR_RADIUS,
     OUTSIDE_COLOR, BORDER_COLOR, MINIMAP_WIDTH,
 )
 from utils import distance
+
+TERRAIN_KINDS = list(TERRAIN_COLORS)  # ["meadow", "forest", ...]: a terrain's number is its position here
 
 
 class LootItem:
@@ -40,8 +43,12 @@ class Arena:
         self.loot = []
         self.fights = []            # fights in progress (combat.Fight objects)
         self.flashes = []           # short markers where fights ended, each [x, y, frames_left]
+        self.frames_since_fight = 0 # frames since the last fight started (for lull alerts)
+        self.fights_started = 0     # fights so far (for the debrief)
+        self.bloodbath = False      # True while the opening bloodbath lasts (set by main.Simulation)
         self.spawn_loot()
-        self.background = self.paint_background()
+        # The terrain image, and a grid saying which terrain type is at every pixel
+        self.background, self.terrain_index = self.paint_terrain()
         # A small copy of the terrain for the minimap, made once
         minimap_height = int(WORLD_HEIGHT * MINIMAP_WIDTH / WORLD_WIDTH)
         self.minimap = pygame.transform.smoothscale(self.background, (MINIMAP_WIDTH, minimap_height))
@@ -182,44 +189,109 @@ class Arena:
 
     def update_flashes(self):
         """Count every fight marker down by one frame and remove expired ones."""
+        self.frames_since_fight += 1
         for flash in self.flashes:
             flash[2] -= 1
         self.flashes = [flash for flash in self.flashes if flash[2] > 0]
 
     # --- Terrain and drawing ------------------------------------------------
 
-    def paint_background(self):
-        """Paint the terrain once onto one large image: a few big colored areas
-        (meadow, forest, rock, sand, marsh) and a meadow clearing around the
-        cornucopia. Each frame the camera shows part of this image.
+    def paint_terrain(self):
+        """Paint the terrain once, in full detail, and record which terrain
+        type is at every pixel (used by terrain_at). Returns (image, grid).
 
         How the areas are made: TERRAIN_ZONES "zone centers" are scattered over
         the arena, each with a terrain type, and every spot takes the type of
-        its nearest zone center. To keep this fast it is worked out on a coarse
-        grid (one block per TERRAIN_CELL world pixels) and then scaled up with
-        smoothing, which also softens the borders between areas."""
-        kinds = random.choices(list(TERRAIN_WEIGHTS), weights=list(TERRAIN_WEIGHTS.values()),
-                               k=TERRAIN_ZONES)  # k = how many to pick
-        zones = [(random.uniform(0, WORLD_WIDTH), random.uniform(0, WORLD_HEIGHT), kind)
-                 for kind in kinds]
+        its nearest zone center. Before measuring, each spot is nudged by a few
+        overlapping sine waves, which turns straight borders into wavy, natural
+        ones. A meadow clearing surrounds the cornucopia.
 
-        cols = WORLD_WIDTH // TERRAIN_CELL
-        rows = WORLD_HEIGHT // TERRAIN_CELL
-        small = pygame.Surface((cols, rows), 0, 32)  # 32 bits per pixel, needed for smoothscale
-        for col in range(cols):
-            for row in range(rows):
-                x = (col + 0.5) * TERRAIN_CELL
-                y = (row + 0.5) * TERRAIN_CELL
-                if distance(x, y, self.center_x, self.center_y) <= TERRAIN_CLEAR_RADIUS:
-                    kind = "meadow"
-                else:
-                    closest = min(zones, key=lambda zone: distance(x, y, zone[0], zone[1]))
-                    kind = closest[2]
-                small.set_at((col, row), TERRAIN_COLORS[kind])
+        numpy works on whole grids of numbers at once instead of one pixel at a
+        time in a Python loop, which keeps this fast. To save more time the
+        areas are worked out for every second pixel and then doubled up."""
+        zone_kinds = random.choices(list(TERRAIN_WEIGHTS), weights=list(TERRAIN_WEIGHTS.values()),
+                                    k=TERRAIN_ZONES)  # k = how many to pick
+        zones = [(random.uniform(0, WORLD_WIDTH), random.uniform(0, WORLD_HEIGHT), TERRAIN_KINDS.index(kind))
+                 for kind in zone_kinds]
+        phases = [random.uniform(0, 2 * math.pi) for _ in range(4)]
+        rng = np.random.default_rng(random.randrange(2 ** 32))  # numpy's random numbers, seeded from `random`
 
-        surface = pygame.transform.smoothscale(small, (WORLD_WIDTH, WORLD_HEIGHT))
+        # Coordinates of every second pixel. xs is a column and ys a row;
+        # combining them makes numpy "broadcast" them into a full grid.
+        xs = np.arange(0, WORLD_WIDTH, 2, dtype=np.float32)[:, None]
+        ys = np.arange(0, WORLD_HEIGHT, 2, dtype=np.float32)[None, :]
+        wave = TERRAIN_WARP
+        wavy_x = xs + wave * np.sin(ys / 170 + phases[0]) + wave / 2 * np.sin((xs + ys) / 90 + phases[1])
+        wavy_y = ys + wave * np.sin(xs / 190 + phases[2]) + wave / 2 * np.sin((xs - ys) / 110 + phases[3])
+
+        nearest_distance = np.full(wavy_x.shape, np.inf, dtype=np.float32)
+        grid = np.zeros(wavy_x.shape, dtype=np.uint8)
+        for zone_x, zone_y, kind in zones:
+            squared = (wavy_x - zone_x) ** 2 + (wavy_y - zone_y) ** 2  # squared distance is enough to compare
+            closer = squared < nearest_distance  # True wherever this zone is the nearest so far
+            nearest_distance[closer] = squared[closer]
+            grid[closer] = kind
+        clearing = (xs - self.center_x) ** 2 + (ys - self.center_y) ** 2 <= TERRAIN_CLEAR_RADIUS ** 2
+        grid[clearing] = TERRAIN_KINDS.index("meadow")
+
+        # Double up to full size: repeat every value twice along both directions
+        grid = grid.repeat(2, axis=0).repeat(2, axis=1)[:WORLD_WIDTH, :WORLD_HEIGHT]
+
+        # Colors, plus soft light and dark blotches (large and small) and a fine
+        # grain, so the ground looks natural instead of flat
+        palette = np.array([TERRAIN_COLORS[kind] for kind in TERRAIN_KINDS], dtype=np.int16)
+        rgb = palette[grid]  # a color for every pixel: shape (width, height, 3)
+        blotches = self.smooth_noise(rng, 60) * 8 + self.smooth_noise(rng, 15) * 4
+        grain = rng.integers(-4, 5, size=(WORLD_WIDTH, WORLD_HEIGHT))
+        shade = (blotches + grain).astype(np.int16)[:, :, None]  # [:, :, None] adds the color axis
+        rgb = np.clip(rgb + shade, 0, 255).astype(np.uint8)    # clip keeps values within 0-255
+
+        surface = pygame.surfarray.make_surface(rgb)
         pygame.draw.rect(surface, BORDER_COLOR, surface.get_rect(), 6)  # 6 = line width
-        return surface
+        return surface, grid
+
+    def smooth_noise(self, rng, blob_size):
+        """A full-size grid of smoothly varying random values between -1 and 1,
+        with blobs roughly `blob_size` world pixels across. It picks one random
+        value per blob in a small image and lets pygame blend them smoothly
+        while scaling that image up to the full arena size."""
+        small_size = (WORLD_WIDTH // blob_size + 2, WORLD_HEIGHT // blob_size + 2)
+        values = rng.integers(0, 256, size=small_size + (3,), dtype=np.uint8)  # + (3,): red, green, blue
+        small = pygame.surfarray.make_surface(values)
+        big = pygame.transform.smoothscale(small, (WORLD_WIDTH, WORLD_HEIGHT))
+        # Use one color channel, turned from 0..255 into -1..1
+        return pygame.surfarray.array3d(big)[:, :, 0].astype(np.float32) / 127.5 - 1
+
+    def terrain_at(self, x, y):
+        """The terrain type ("meadow", "forest", ...) at a world position."""
+        col = min(max(int(x), 0), WORLD_WIDTH - 1)
+        row = min(max(int(y), 0), WORLD_HEIGHT - 1)
+        return TERRAIN_KINDS[self.terrain_index[col, row]]
+
+    def find_terrain(self, x, y, kind, max_distance):
+        """A point of terrain `kind` near (x, y), within max_distance, or None.
+        Checks 16 directions on circles growing 40 px at a time, and aims a
+        little past the edge so the player ends up properly inside."""
+        if self.terrain_at(x, y) == kind:
+            return x, y
+        for radius in range(40, int(max_distance) + 1, 40):
+            for i in range(16):
+                angle = 2 * math.pi * i / 16
+                edge_x = x + math.cos(angle) * radius
+                edge_y = y + math.sin(angle) * radius
+                if self.reachable(edge_x, edge_y) and self.terrain_at(edge_x, edge_y) == kind:
+                    inside_x = edge_x + math.cos(angle) * 30
+                    inside_y = edge_y + math.sin(angle) * 30
+                    if self.reachable(inside_x, inside_y) and self.terrain_at(inside_x, inside_y) == kind:
+                        return inside_x, inside_y
+                    return edge_x, edge_y
+        return None
+
+    def reachable(self, x, y):
+        """True if a player can actually stand at (x, y): inside the arena and
+        not squashed against a wall (a point outside could never be reached)."""
+        margin = 10
+        return margin <= x <= WORLD_WIDTH - margin and margin <= y <= WORLD_HEIGHT - margin
 
     def draw_background(self, screen, camera):
         """Show the part of the background image that is in view, scaled to the zoom."""

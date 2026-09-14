@@ -16,12 +16,15 @@ from config import (
     WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH, STATE_SPEED_MULTIPLIERS,
     TEMPERAMENT_WEIGHTS, AGGRESSION_RANGES, ROAMING_WEIGHTS,
     SPRINT_SECONDS, STAMINA_RECOVERY_SECONDS, NAME_MIN_ZOOM, NAME_TEXT_COLOR,
+    TERRAIN_SPEED, SAND_THIRST_FACTOR, MARSH_REFILL_SECONDS,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
 
 # How much sleep a resting player regains per frame
 REST_RATE = NEED_MAX / (REST_SECONDS_TO_FULL * FPS)
+# How much thirst a player in marsh regains per frame
+MARSH_REFILL_RATE = NEED_MAX / (MARSH_REFILL_SECONDS * FPS)
 
 
 class Player:
@@ -70,6 +73,11 @@ class Player:
         self.visited_cells = set()  # arena cells (column, row) this player has been in
         self.pause_timer = 0        # frames left standing still to look around
         self.rest_spot = None       # (x, y) by a wall where it intends to sleep
+        self.collapsed = False      # True while sleeping on the spot after running out of sleep
+        self.avoid_point = None     # (x, y) it is backing away to
+        self.avoid_timer = 0        # frames left committed to backing away
+        self.placement = None       # final place (1 = winner), set when it dies or wins
+        self.death_frame = None     # simulation frame it died on
         self.track_point = None     # estimated waypoint toward an unseen player (leaders)
         self.track_timer = 0        # frames until that direction is re-estimated
         self.known_loot = set()     # loot items this player has seen
@@ -88,6 +96,10 @@ class Player:
         self.stamina = 1.0          # 1 = rested, 0 = exhausted (can't sprint)
         self.heard_fight = None     # (x, y) of the last fight this player heard
         self.heard_timer = 0        # frames left that it still cares about that noise
+        self.terrain = "meadow"     # terrain type under the player (updated by ai.look_around)
+        self.water_spot = None      # marsh it is heading for to drink (False: none within reach)
+        self.tip_target = None      # player the Gamemakers pointed it at after a quiet spell
+        self.tip_timer = 0          # frames left to go after that player
         self.retreat_timer = 0      # frames left backing off after a fight (can't fight meanwhile)
         self.retreat_from = None    # the opponent being backed away from
 
@@ -114,7 +126,8 @@ class Player:
         - A following member speeds up when its leader does.
         - A leader moves no faster than its slowest member, and at half that
           while calm and a member has fallen behind, so the group stays together.
-        - An exhausted player (no stamina left) can't sprint."""
+        - An exhausted player (no stamina left) can't sprint.
+        - Some terrain (marsh) slows everyone down."""
         multiplier = STATE_SPEED_MULTIPLIERS.get(self.state, 1.0)
         speed = self.speed
         if self.alliance is not None:
@@ -132,7 +145,7 @@ class Player:
                     multiplier *= 0.5
         if self.stamina <= 0:
             multiplier = min(multiplier, 1.0)  # exhausted: no sprinting
-        return speed * multiplier
+        return speed * multiplier * TERRAIN_SPEED.get(self.terrain, 1.0)
 
     def move(self):
         # Stamina: sprinting (moving in a fast state) uses it up, anything
@@ -186,7 +199,13 @@ class Player:
             if name == "sleep" and self.state == RESTING:
                 self.needs[name] = min(NEED_MAX, self.needs[name] + REST_RATE)
                 continue  # skip the decay below for this need
-            self.needs[name] -= self.decay_rates[name]
+            if name == "thirst" and self.terrain == "marsh":
+                self.needs[name] = min(NEED_MAX, self.needs[name] + MARSH_REFILL_RATE)
+                continue  # marsh water: thirst goes up instead of down
+            rate = self.decay_rates[name]
+            if name == "thirst" and self.terrain == "sand":
+                rate *= SAND_THIRST_FACTOR  # hot, open sand makes players thirsty faster
+            self.needs[name] -= rate
             if self.needs[name] <= 0:
                 self.needs[name] = 0
                 self.alive = False

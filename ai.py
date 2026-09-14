@@ -17,6 +17,10 @@ from config import (
     TRACK_RADIUS, TRACK_STEP, TRACK_ANGLE_NOISE, TRACK_UPDATE_SECONDS, TRACK_MIN_FIGHT_CHANCE,
     EXPLORER_PAUSE_FACTOR, SHOWDOWN_PLAYERS, EDGE_BAND, BLOODBATH_RADIUS, RUSH_BIAS,
     FIGHT_ALERT_RADIUS, FINALE_RADIUS, SHELTER_MAX_DISTANCE,
+    TERRAIN_VISIBILITY, MARSH_SEARCH_RADIUS, MARSH_DRINK_UNTIL, FOREST_SHELTER_RADIUS,
+    EXPLORE_MIN_TRIP, EXPLORER_MIN_TRIP, TIP_SECONDS, INVESTIGATE_MIN_FIGHT_CHANCE,
+    SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
+    BLOODBATH_JOIN_CHANCE,
 )
 from utils import distance, angle_to
 
@@ -37,6 +41,7 @@ EXPLORING = "EXPLORING"         # nothing urgent: heading for unvisited parts of
 FIGHTING = "FIGHTING"           # locked in a fight until it is decided
 INVESTIGATING = "INVESTIGATING" # heard a fight and is going to see what is happening
 CONVERGING = "CONVERGING"       # finale: heading for the cornucopia
+DRINKING = "DRINKING"           # standing in marsh, drinking
 
 # Dot color for each state in the debug view
 STATE_COLORS = {
@@ -56,6 +61,7 @@ STATE_COLORS = {
     FIGHTING: (255, 255, 0),        # bright yellow
     INVESTIGATING: (255, 190, 120), # peach
     CONVERGING: (205, 165, 70),     # gold
+    DRINKING: (90, 220, 255),       # light blue
 }
 
 # How a player reacts to another player it sees
@@ -94,16 +100,29 @@ def point_away_from(player, from_x, from_y):
     return x, y
 
 
+def start_avoiding(player, from_x, from_y):
+    """Back away from (from_x, from_y), and keep going for AVOID_COMMIT_SECONDS
+    even once the danger is out of sight (see decide, step 3b). Committing to
+    one direction stops the player jiggling at the edge of its vision: step
+    away, lose sight, step back toward its goal, see the other player again..."""
+    set_state(player, AVOIDING)
+    player.avoid_point = point_away_from(player, from_x, from_y)
+    player.avoid_timer = int(AVOID_COMMIT_SECONDS * FPS)
+    player.target = player.avoid_point
+
+
 def cell_of(x, y):
     """Which exploration cell (column, row) a point lies in. // is whole-number division."""
     return int(x // EXPLORE_CELL_SIZE), int(y // EXPLORE_CELL_SIZE)
 
 
-def choose_explore_point(player, roaming=None):
-    """A random point in a cell this player has not visited yet. Which cells
-    count depends on its roaming trait (or on `roaming`, if given):
+def choose_explore_point(player, roaming=None, min_trip=EXPLORE_MIN_TRIP):
+    """A random point in a cell this player has not visited yet, at least
+    `min_trip` away when possible, so the player heads one way for a while
+    instead of hopping around. Which cells count depends on its roaming
+    trait (or on `roaming`, if given):
     - "edge": only cells along the arena walls, one of the three nearest
-    - "explorer": any unvisited cell, however far away
+    - "explorer": any unvisited cell at least EXPLORER_MIN_TRIP away
     - "normal": one of the three nearest unvisited cells
     Once every candidate cell has been visited, it starts over."""
     roaming = roaming or player.roaming  # `or`: use player.roaming if roaming is None
@@ -126,10 +145,14 @@ def choose_explore_point(player, roaming=None):
         return distance(player.x, player.y, center_x, center_y)
 
     if roaming == "explorer":
-        col, row = random.choice(unvisited)
+        min_trip = max(min_trip, EXPLORER_MIN_TRIP)
+    far_enough = [cell for cell in unvisited if distance_to_cell(cell) >= min_trip]
+    choices = far_enough or unvisited  # if nothing is far enough, any unvisited cell will do
+    if roaming == "explorer":
+        col, row = random.choice(choices)
     else:
-        unvisited.sort(key=distance_to_cell)  # nearest cells first
-        col, row = random.choice(unvisited[:3])
+        choices.sort(key=distance_to_cell)  # nearest (of those far enough) first
+        col, row = random.choice(choices[:3])
     x = random.uniform(col * EXPLORE_CELL_SIZE, (col + 1) * EXPLORE_CELL_SIZE)
     y = random.uniform(row * EXPLORE_CELL_SIZE, (row + 1) * EXPLORE_CELL_SIZE)
 
@@ -173,11 +196,19 @@ def explore(player):
     player.target = player.explore_point
 
 
-def shelter_spot(player):
-    """A spot toward the wall nearest to the player, away from the busy
-    center: SHELTER_WALL_MARGIN from that wall, but never more than
-    SHELTER_MAX_DISTANCE away, so a tired player doesn't cross half the
-    arena to sleep. Each option is (distance to that wall, spot)."""
+def shelter_spot(player, arena):
+    """Where a tired player goes to sleep:
+    1. forest within FOREST_SHELTER_RADIUS (cowards look twice as far),
+       because players sleeping in forest are hard to spot
+    2. otherwise toward the wall nearest to the player, away from the busy
+       center: SHELTER_WALL_MARGIN from that wall, but never more than
+       SHELTER_MAX_DISTANCE away, so it doesn't cross half the arena to sleep.
+       Each option below is (distance to that wall, spot)."""
+    search = FOREST_SHELTER_RADIUS * (2 if player.temperament == "coward" else 1)
+    forest = arena.find_terrain(player.x, player.y, "forest", search)
+    if forest is not None:
+        return forest
+
     options = [
         (player.x, (SHELTER_WALL_MARGIN, player.y)),                                  # left
         (WORLD_WIDTH - player.x, (WORLD_WIDTH - SHELTER_WALL_MARGIN, player.y)),    # right
@@ -225,12 +256,15 @@ def look_around(player, arena, players):
     items and non-allied living players currently in sight on the player
     (as visible_loot and visible_players)."""
     player.visited_cells.add(cell_of(player.x, player.y))
+    player.terrain = arena.terrain_at(player.x, player.y)
+    # How far this player sees loot from where it stands (forest: less, sand: more)
+    sight = VISION_RADIUS * TERRAIN_VISIBILITY.get(player.terrain, 1.0)
 
     visible_loot = []
     for item in arena.loot:
         if item.dropped_by is player:
             continue  # it won't pick up its own dropped items, so ignore them
-        if distance(player.x, player.y, item.x, item.y) <= VISION_RADIUS:
+        if distance(player.x, player.y, item.x, item.y) <= sight:
             visible_loot.append(item)
             player.known_loot.add(item)
 
@@ -238,7 +272,7 @@ def look_around(player, arena, players):
     # a copy (list(...)) because you cannot remove from a set while looping
     # over that same set.
     for item in list(player.known_loot):
-        if item.taken and distance(player.x, player.y, item.x, item.y) <= VISION_RADIUS:
+        if item.taken and distance(player.x, player.y, item.x, item.y) <= sight:
             player.known_loot.discard(item)
 
     player.visible_loot = visible_loot
@@ -248,8 +282,17 @@ def look_around(player, arena, players):
     player.visible_players = [
         other for other in players
         if other is not player and other.alive and not is_ally(player, other)
-        and distance(player.x, player.y, other.x, other.y) <= radius
+        and can_see(player, other, radius)
     ]
+
+
+def can_see(player, other, radius):
+    """True if `other` is within `radius` of `player`, adjusted for terrain:
+    if either of them is in forest the distance is halved (forest hides);
+    otherwise, if either is on sand, it is 30% longer (open ground)."""
+    factors = [TERRAIN_VISIBILITY.get(player.terrain, 1.0), TERRAIN_VISIBILITY.get(other.terrain, 1.0)]
+    factor = min(factors) if min(factors) < 1 else max(factors)
+    return distance(player.x, player.y, other.x, other.y) <= radius * factor
 
 
 def is_ally(player, other):
@@ -292,8 +335,10 @@ def nearest(player, things):
     )
 
 
-def most_urgent_need(members, resting):
+def most_urgent_need(members, state):
     """Return "sleep", "food", "water", or None if nothing needs doing.
+    `state` is the deciding player's current state (resting or drinking
+    players keep at it until they are refreshed).
     `members` is [player] for a player on its own, or every member of an
     alliance, so a leader acts on the needs of the whole group.
 
@@ -304,13 +349,15 @@ def most_urgent_need(members, resting):
     If several count, the one with the lowest value wins."""
     urgent = {}  # what is needed -> lowest value of that need in the group
     lowest_sleep = min(member.needs["sleep"] for member in members)
-    if lowest_sleep < REST_THRESHOLD or (resting and lowest_sleep < REST_UNTIL):
+    if lowest_sleep < REST_THRESHOLD or (state == RESTING and lowest_sleep < REST_UNTIL):
         urgent["sleep"] = lowest_sleep
     for kind, need in LOOT_RESTORES.items():  # ("food", "hunger"), ("water", "thirst")
         lowest = min(member.needs[need] for member in members)
         carried = sum(member.inventory[kind] for member in members)
         if lowest < SEEK_THRESHOLD and carried == 0:
             urgent[kind] = lowest
+        elif kind == "water" and state == DRINKING and lowest < MARSH_DRINK_UNTIL:
+            urgent[kind] = lowest  # keep drinking in the marsh until refreshed
 
     if not urgent:
         return None
@@ -470,8 +517,7 @@ def react_to_players(player, visible_players, need):
     # chose to fight but is on hunt cooldown avoids instead.)
     threat = nearest(player, visible_players)
     if threat:
-        set_state(player, AVOIDING)
-        player.target = point_away_from(player, threat.x, threat.y)
+        start_avoiding(player, threat.x, threat.y)
         return True
     return False
 
@@ -512,6 +558,43 @@ def track(leader, players):
     return True
 
 
+def reveal_positions(players):
+    """After a long quiet spell the Gamemakers step in: every aggressive
+    player (fight chance at least 0.5) that decides for itself — on its own
+    or leading an alliance — is told where the nearest non-ally is, and goes
+    after it (see follow_tip). Returns how many players were told."""
+    told = 0
+    for player in players:
+        if player.alliance is not None and player.alliance.leader is not player:
+            continue  # members follow their leader
+        if player.fight is not None or fight_chance(player) < 0.5:
+            continue
+        others = [other for other in players
+                  if other is not player and other.alive and not is_ally(player, other)]
+        target = nearest(player, others)
+        if target is not None:
+            player.tip_target = target
+            player.tip_timer = TIP_SECONDS * FPS
+            told += 1
+    return told
+
+
+def follow_tip(player):
+    """Head straight for the player the Gamemakers revealed, until it comes
+    into sight (then the normal fight or avoid rules take over) or time runs
+    out. Returns True if doing so this frame."""
+    target = player.tip_target
+    if target is None:
+        return False
+    player.tip_timer -= 1
+    if player.tip_timer <= 0 or not target.alive or is_ally(player, target):
+        player.tip_target = None
+        return False
+    set_state(player, TRACKING)
+    player.target = (target.x, target.y)
+    return True
+
+
 def respond_to_noise(player):
     """React to a fight heard nearby (see combat.start_fight): players likely
     to fight go to see what is happening; the others move away from the
@@ -520,7 +603,7 @@ def respond_to_noise(player):
         return False
     noise_x, noise_y = player.heard_fight
     to_noise = distance(player.x, player.y, noise_x, noise_y)
-    if fight_chance(player) >= 0.5:
+    if fight_chance(player) >= INVESTIGATE_MIN_FIGHT_CHANCE:
         if to_noise < ARRIVE_DISTANCE * 3:
             player.heard_timer = 0  # arrived: whatever happened here is over
             return False
@@ -530,8 +613,7 @@ def respond_to_noise(player):
         if to_noise > FIGHT_ALERT_RADIUS:
             player.heard_timer = 0  # far enough away now
             return False
-        set_state(player, AVOIDING)
-        player.target = point_away_from(player, noise_x, noise_y)
+        start_avoiding(player, noise_x, noise_y)
     return True
 
 
@@ -597,7 +679,7 @@ def showdown(player, players, arena):
     targets = [
         other for other in players
         if other is not player and other.alive and (
-            distance(player.x, player.y, other.x, other.y) <= VISION_RADIUS
+            can_see(player, other, VISION_RADIUS)
             or (at_cornucopia and
                 distance(other.x, other.y, arena.center_x, arena.center_y) <= FINALE_RADIUS)
         )
@@ -630,6 +712,18 @@ def decide(player, arena, players):
         player.target = None
         return
 
+    # 0a. Too tired to go on: collapse and sleep right here until rested,
+    #     whatever else is going on (so nobody dies of lack of sleep while
+    #     walking to shelter, avoiding someone or fighting in the finale)
+    if player.needs["sleep"] < SLEEP_COLLAPSE_THRESHOLD:
+        player.collapsed = True
+    if player.collapsed:
+        if player.needs["sleep"] < REST_UNTIL:
+            set_state(player, RESTING)
+            player.target = None
+            return
+        player.collapsed = False  # rested: back to normal
+
     # 0b. Endgame finale: the last few tributes meet at the cornucopia
     if 1 < len(players) <= SHOWDOWN_PLAYERS:
         showdown(player, players, arena)
@@ -644,6 +738,18 @@ def decide(player, arena, players):
         #   horn, attack the nearest player within BLOODBATH_RADIUS
         # - an unarmed rusher that is being hunted runs for it
         # - everyone else keeps grabbing loot, weapons first
+        # Big alliances form in the chaos: rushers team up with those right
+        # next to them (like the Careers in the books). New alliances are
+        # rare, but joining an existing one is easy, so there are few but big groups.
+        if player.alliance is None or player.alliance.leader is player:
+            for other in player.visible_players:
+                if distance(player.x, player.y, other.x, other.y) > BLOODBATH_RADIUS:
+                    continue
+                joining = player.alliance is not None or other.alliance is not None
+                chance = BLOODBATH_JOIN_CHANCE if joining else BLOODBATH_ALLIANCE_CHANCE
+                if alliances.try_to_ally(player, other, chance):
+                    return
+
         at_cornucopia = distance(player.x, player.y, arena.center_x, arena.center_y) <= BLOODBATH_RADIUS
         armed = player.inventory["weapon"] > 0
         if armed or (player.temperament == "killer" and at_cornucopia):
@@ -698,6 +804,20 @@ def decide(player, arena, players):
         follow_leader(player)
         return
 
+    # 3b. Committed to backing away from someone: keep going until the time is
+    #     up or the spot is reached, then pick fresh destinations so the
+    #     player doesn't walk straight back toward the same danger
+    if player.avoid_timer > 0:
+        player.avoid_timer -= 1
+        if player.avoid_timer > 0 and \
+                distance(player.x, player.y, *player.avoid_point) >= ARRIVE_DISTANCE:
+            set_state(player, AVOIDING)
+            player.target = player.avoid_point
+            return
+        player.avoid_timer = 0
+        player.explore_point = None
+        player.search_point = None
+
     # Players on their own use what they see; leaders use the whole group's view
     if player.alliance is not None:
         visible_loot, visible_players, known_loot = shared_view(player)
@@ -707,10 +827,12 @@ def decide(player, arena, players):
         known_loot = player.known_loot
         members = [player]
 
-    need = most_urgent_need(members, player.state == RESTING)
+    need = most_urgent_need(members, player.state)
     asleep = player.state == RESTING and need == "sleep"
     if need != "sleep":
         player.rest_spot = None  # not tired (any more): forget the sleeping spot
+    if need != "water":
+        player.water_spot = None  # not thirsty (any more): forget the marsh it was heading for
 
     # 4. Players in sight are allied with, fought or avoided
     #    (a sleeping player sees nothing)
@@ -722,7 +844,7 @@ def decide(player, arena, players):
         if player.state != RESTING:
             # Walk to a quiet spot by a wall first, then lie down there
             if player.rest_spot is None:
-                player.rest_spot = shelter_spot(player)
+                player.rest_spot = shelter_spot(player, arena)
             if distance(player.x, player.y, *player.rest_spot) > ARRIVE_DISTANCE:
                 set_state(player, SHELTERING)
                 player.target = player.rest_spot
@@ -738,6 +860,22 @@ def decide(player, arena, players):
             player.target = (item.x, item.y)
             return
 
+        if need == "water":
+            # Marsh is a natural water source: drink while standing in it, or
+            # walk to marsh within reach. (water_spot False = none nearby;
+            # remembered so the search isn't repeated every frame.)
+            if player.terrain == "marsh":
+                set_state(player, DRINKING)
+                player.target = None
+                return
+            if player.water_spot is None:
+                player.water_spot = arena.find_terrain(
+                    player.x, player.y, "marsh", MARSH_SEARCH_RADIUS) or False
+            if player.water_spot:
+                set_state(player, SEEKING)
+                player.target = player.water_spot
+                return
+
         set_state(player, SEARCHING)
         remembered = [item for item in known_loot if item.kind == need]
         if remembered:
@@ -749,7 +887,7 @@ def decide(player, arena, players):
             if player.search_point is None or distance(
                     player.x, player.y, *player.search_point) < ARRIVE_DISTANCE:
                 # (searching always looks nearby, whatever the roaming trait)
-                player.search_point = choose_explore_point(player, "normal")
+                player.search_point = choose_explore_point(player, "normal", min_trip=0)
             player.target = player.search_point
         return
 
@@ -757,7 +895,11 @@ def decide(player, arena, players):
     if respond_to_noise(player):
         return
 
-    # 7. Collect loot in sight that can still be carried
+    # 7. The Gamemakers revealed a player to go after (after a quiet spell)
+    if follow_tip(player):
+        return
+
+    # 8. Collect loot in sight that can still be carried
     wanted = [item for item in visible_loot if player.can_carry(item.kind)]
     if wanted:
         set_state(player, GATHERING)
@@ -765,9 +907,9 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 8. Aggressive players and alliances head toward players they can't see yet
+    # 9. Aggressive players and alliances head toward players they can't see yet
     if track(player, players):
         return
 
-    # 9. Nothing urgent: explore
+    # 10. Nothing urgent: explore
     explore(player)

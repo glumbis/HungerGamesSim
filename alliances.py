@@ -88,10 +88,11 @@ class Alliance:
         return ", ".join(member.name for member in self.members)
 
 
-def try_to_ally(player, other):
+def try_to_ally(player, other, chance=None):
     """`player` (on its own, or an alliance leader) meets `other`, who is
     not an ally. Two loners may form a new alliance, or a loner may join the
-    other's alliance. Returns True if they are now allies."""
+    other's alliance. `chance` replaces the usual chance (used in the
+    bloodbath). Returns True if they are now allies."""
     if player.alliance is not None and other.alliance is not None:
         return False  # two alliances never merge
     if other in player.former_allies:
@@ -110,7 +111,8 @@ def try_to_ally(player, other):
 
     # An alliance answers through its leader
     other_side = other.alliance.leader if other.alliance else other
-    chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
+    if chance is None:
+        chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
     if random.random() >= chance:
         return False
 

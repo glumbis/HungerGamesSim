@@ -37,10 +37,11 @@ def finished(names):
     return [name.strip() or default for name, default in zip(names, DEFAULT_NAMES)]
 
 
-def run_start_screen(screen, clock):
-    """Show the start screen until the Games are started.
+def run_start_screen(screen, clock, names=None):
+    """Show the start screen until the Games are started. `names` are the
+    names to start from (the previous game's, or the defaults if None).
     Returns the list of names, or None if the window was closed."""
-    names = list(DEFAULT_NAMES)
+    names = list(names or DEFAULT_NAMES)  # list(...) makes a copy we can change
     selected = None  # index of the name being edited, or None
     title_font = pygame.font.Font(None, 60)
     font = pygame.font.Font(None, 26)
