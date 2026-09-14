@@ -213,7 +213,8 @@ the next step onward.)
   max 5 members; allies within 80 px add 80% of their strength. Bloodbath
   (opening only): every fight is an elimination attempt and the escape
   chance is multiplied by 0.15; lone rushers form a new alliance 20% of the
-  time but join an existing one 70% of the time; rush bias 0.15. General
+  time but join an existing one 70% of the time; rush bias 0.15; the rush
+  (and so the bloodbath) lasts at least 11 s. General
   escape bonus −0.20. End of game: the arena freezes, the winner's name is
   shown for 4 s, then `debrief.py` shows stats, standings (placement,
   district, kills, fate, time) and the scrollable event history; Enter
