@@ -8,14 +8,26 @@ from config import (
     WORLD_WIDTH, WORLD_HEIGHT, FPS, CAMERA_FIGHT_LINGER_SECONDS,
     CAMERA_MAX_ZOOM, CAMERA_OPENING_ZOOM, CAMERA_CHASE_ZOOM, CAMERA_FIGHT_ZOOM,
     CAMERA_SMOOTHING, CAMERA_PAN_SPEED, CAMERA_ZOOM_STEP, CAMERA_MUTT_RADIUS,
-    CAMERA_SWITCH_COOLDOWN_SECONDS,
+    CAMERA_SWITCH_COOLDOWN_SECONDS, CAMERA_STARVE_THRESHOLD, CAMERA_STARVE_LINGER_SECONDS,
 )
 from utils import distance
+
+# How long the camera stays on the spot after one of these has ended
+LINGER_SECONDS = {
+    "fight": CAMERA_FIGHT_LINGER_SECONDS,
+    "mutt": CAMERA_FIGHT_LINGER_SECONDS,
+    "starving": CAMERA_STARVE_LINGER_SECONDS,
+}
 
 
 def is_chasing(player):
     return (player.alive and player.state in (HUNTING, SEARCHING)
             and player.prey is not None and player.prey.alive)
+
+
+def lowest_supply_need(player):
+    """The lower of a tribute's hunger and thirst."""
+    return min(player.needs["hunger"], player.needs["thirst"])
 
 
 class Camera:
@@ -25,11 +37,13 @@ class Camera:
         self.zoom = zoom        # screen pixels per world pixel (2 = everything twice as big)
         self.auto = True        # True: the camera follows the action by itself
         self.dragging = False   # True while the left mouse button drags the view
-        # What the automatic camera is showing, as a tuple:
-        # ("fight", fight), ("mutt", mutt, player), ("chase", hunter), ("pair", a, b), or None
+        # What the automatic camera is showing, as a tuple: ("fight", fight),
+        # ("starving", player), ("mutt", mutt, player), ("chase", hunter),
+        # ("pair", a, b), or None
         self.subject = None
         self.switch_timer = 0   # frames before it may switch to something else
-        self.linger_frames = 0  # frames left to stay on a fight's spot after it ends
+        self.subject_over = False  # True once a fight, mutt attack or starving tribute being shown has ended
+        self.linger_frames = 0  # frames left to stay on the spot after that
         self.watched = []       # the tributes the automatic camera is showing (their cards are shown)
 
     # --- Converting between world and screen coordinates ----------------
@@ -110,10 +124,10 @@ class Camera:
         if self.auto:
             target_x, target_y, target_zoom = self.choose_focus(sim, screen)
             # Move a small share of the remaining distance each frame: fast
-            # when far away, gentle when close. Fights are short, so get there
-            # twice as quickly.
-            on_fight = self.subject is not None and self.subject[0] == "fight"
-            smoothing = CAMERA_SMOOTHING * 2 if on_fight else CAMERA_SMOOTHING
+            # when far away, gentle when close. Fights and deaths are short,
+            # so get there twice as quickly.
+            urgent = self.subject is not None and self.subject[0] in LINGER_SECONDS
+            smoothing = CAMERA_SMOOTHING * 2 if urgent else CAMERA_SMOOTHING
             self.x += (target_x - self.x) * smoothing
             self.y += (target_y - self.y) * smoothing
             self.zoom += (target_zoom - self.zoom) * smoothing
@@ -125,7 +139,9 @@ class Camera:
         Afterwards it picks the most interesting thing (see best_subject), but
         once it shows something it stays on it for at least
         CAMERA_SWITCH_COOLDOWN_SECONDS, unless that is over, so the view
-        doesn't jump around. It also remembers whom it shows (self.watched)."""
+        doesn't jump around. A fight, a mutt attack or a starving tribute is
+        followed until it ends and a moment after (LINGER_SECONDS). It also
+        remembers whom it shows (self.watched)."""
         arena = sim.arena
         self.watched = []
         if not sim.opening_over:
@@ -135,30 +151,39 @@ class Camera:
 
         if self.switch_timer > 0:
             self.switch_timer -= 1
-        if self.subject is not None and self.subject[0] == "fight" and self.subject[1] not in arena.fights:
-            self.linger_frames -= 1  # the fight is decided: stay on its spot a moment longer
+        subject = self.subject
+        if subject is not None and subject[0] in LINGER_SECONDS and not self.happening(subject, sim):
+            if not self.subject_over:
+                self.subject_over = True  # it has just ended: start the short linger
+                self.linger_frames = int(LINGER_SECONDS[subject[0]] * FPS)
+            else:
+                self.linger_frames -= 1
 
         best = self.best_subject(sim)
-        current_ok = self.still_on(self.subject, sim)
-        if best != self.subject and (self.switch_timer == 0 or not current_ok):
+        if best != self.subject and (self.switch_timer == 0 or not self.still_on(self.subject, sim)):
             self.subject = best
+            self.subject_over = False
             self.switch_timer = int(CAMERA_SWITCH_COOLDOWN_SECONDS * FPS)
-            if best is not None and best[0] == "fight":
-                self.linger_frames = int(CAMERA_FIGHT_LINGER_SECONDS * FPS)
         return self.show(self.subject, sim, screen)
 
     def best_subject(self, sim):
         """The most interesting thing to show right now:
-        1. the fight being watched, until it is decided (and a moment after)
-        2. another fight (the one closest to the view)
-        3. a mutt close to a tribute
-        4. a chase (the same hunter while its chase lasts)
-        5. the two non-allied tributes closest to each other"""
-        arena = sim.arena
-        if self.subject is not None and self.subject[0] == "fight" and self.still_on(self.subject, sim):
+        1. the fight, mutt attack or starving tribute being shown, until it
+           has ended (and a moment after)
+        2. a tribute about to die of hunger or thirst
+        3. a fight (the one closest to the view)
+        4. a mutt close to a tribute
+        5. a chase (the same hunter while its chase lasts)
+        6. the two non-allied tributes closest to each other"""
+        if self.subject is not None and self.subject[0] in LINGER_SECONDS and self.still_on(self.subject, sim):
             return self.subject
-        if arena.fights:
-            fight = min(arena.fights, key=lambda fight: distance(fight.x, fight.y, self.x, self.y))
+
+        starving = [player for player in sim.players if lowest_supply_need(player) < CAMERA_STARVE_THRESHOLD]
+        if starving:
+            return ("starving", min(starving, key=lowest_supply_need))
+
+        if sim.arena.fights:
+            fight = min(sim.arena.fights, key=lambda fight: distance(fight.x, fight.y, self.x, self.y))
             return ("fight", fight)
 
         encounters = [(distance(mutt.x, mutt.y, player.x, player.y), mutt, player)
@@ -181,17 +206,26 @@ class Camera:
             return ("pair", first, second)
         return None
 
-    def still_on(self, subject, sim):
-        """True if what `subject` shows is still going on."""
-        if subject is None:
-            return False
+    def happening(self, subject, sim):
+        """True while a fight, mutt attack or starving tribute is still going on."""
         kind = subject[0]
         if kind == "fight":
-            return subject[1] in sim.arena.fights or self.linger_frames > 0
+            return subject[1] in sim.arena.fights
         if kind == "mutt":
             _, mutt, player = subject
             return mutt in sim.gamemakers.mutts and player.alive and \
                 distance(mutt.x, mutt.y, player.x, player.y) <= CAMERA_MUTT_RADIUS * 1.5
+        player = subject[1]  # starving: until it dies or finds something (a little margin avoids flicker)
+        return player.alive and lowest_supply_need(player) < CAMERA_STARVE_THRESHOLD * 1.5
+
+    def still_on(self, subject, sim):
+        """True if what `subject` shows is still worth showing."""
+        if subject is None:
+            return False
+        kind = subject[0]
+        if kind in LINGER_SECONDS:
+            lingering = subject is self.subject and self.subject_over and self.linger_frames > 0
+            return self.happening(subject, sim) or lingering
         if kind == "chase":
             return is_chasing(subject[1])
         _, first, second = subject  # a pair
@@ -206,6 +240,10 @@ class Camera:
             fight = subject[1]
             self.watched = [fight.attacker, fight.defender]
             return fight.x, fight.y, CAMERA_FIGHT_ZOOM
+        if kind == "starving":
+            player = subject[1]
+            self.watched = [player]
+            return player.x, player.y, CAMERA_FIGHT_ZOOM
         if kind == "mutt":
             _, mutt, player = subject
             self.watched = [player]

@@ -138,7 +138,14 @@ bloodthirsty alliance that rushes the horn together.
   (`DESPERATE_SUPPLY_THRESHOLD`, `DESPERATE_KNOWN_RANGE`).
 - Names of alliance members standing close together are stacked in one
   column above the group; other tributes keep their name above their own dot
-  (`main.draw_name_labels`, `NAME_STACK_DISTANCE`).
+  (`main.draw_name_labels`, `NAME_STACK_DISTANCE`). When an alliance fights
+  another alliance or a tribute on its own, the two sides' names stand side
+  by side with "vs" between them.
+- Camera lingering (`camera.LINGER_SECONDS`): after a fight or a mutt attack
+  the camera stays on the spot for 0.5 s. A tribute about to die of hunger or
+  thirst (below 5) is shown before anything else except an ongoing fight or
+  mutt attack, and the camera stays 0.3 s after it dies
+  (`CAMERA_STARVE_THRESHOLD`, `CAMERA_STARVE_LINGER_SECONDS`).
 - Rare betrayals; an alliance breaks up when too few members are left, when
   only allies remain, or at the finale. Each alliance gets a name ("the
   Careers" for founders from Districts 1, 2 and 4).

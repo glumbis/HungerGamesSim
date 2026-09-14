@@ -531,7 +531,7 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None, fast=F
                              on_screen(player.x, player.y), on_screen(player.prey.x, player.prey.y))
     for player in sim.players:
         player.draw(screen, camera, name_font, debug, draw_name=False)
-    draw_name_labels(screen, camera, sim.players, name_font)
+    draw_name_labels(screen, camera, sim.players, name_font, sim.arena.fights)
     if selected is not None and selected.alive:
         pygame.draw.circle(screen, SELECT_RING_COLOR, on_screen(selected.x, selected.y), camera.size(9, 7), 1)
 
@@ -553,7 +553,7 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None, fast=F
     pygame.display.flip()
 
 
-def draw_name_labels(screen, camera, players, name_font):
+def draw_name_labels(screen, camera, players, name_font, fights=()):
     """Names above the tributes. When members of an alliance stand close
     together, their names are stacked above the group instead of being drawn
     on top of each other. Everyone else keeps their name above their own dot."""
@@ -584,14 +584,42 @@ def draw_name_labels(screen, camera, players, name_font):
     groups = {}
     for i, item in enumerate(labeled):
         groups.setdefault(group_of(i), []).append(item)  # setdefault: start an empty list the first time
+    group_by_player = {player: group for group in groups.values() for player, _ in group}
+
+    # An alliance fighting another alliance or a tribute on its own: the two
+    # sides' names side by side, with "vs" in between
+    drawn = []  # groups already drawn
+    for fight in fights:
+        first, second = fight.attacker, fight.defender
+        if first.alliance is None and second.alliance is None:
+            continue  # two tributes on their own: their names are already apart
+        if first.alliance is second.alliance:
+            continue  # allies (a betrayal just happened): nothing to put side by side
+        left, right = group_by_player.get(first), group_by_player.get(second)
+        if left is None or right is None or any(group is left or group is right for group in drawn):
+            continue
+        drawn += [left, right]
+        middle_x = camera.world_to_screen(fight.x, fight.y, screen)[0]
+        bottom = min(anchor[1] for _, anchor in left + right)
+        half_width = max(player.label(name_font).get_width() for player, _ in left + right) / 2
+        draw_name_stack(screen, left, middle_x - half_width - 14, bottom, name_font)
+        draw_name_stack(screen, right, middle_x + half_width + 14, bottom, name_font)
+        row_height = left[0][0].label(name_font).get_height() + 1
+        ui.text(screen, "vs", ui.font(12, bold=True), ui.ACCENT,
+                (middle_x, bottom - max(len(left), len(right)) * row_height / 2), "center", shadow=True)
 
     for group in groups.values():
-        x = sum(anchor[0] for _, anchor in group) / len(group)  # above the middle of the group
-        bottom = min(anchor[1] for _, anchor in group)           # above its highest tribute
-        group.sort(key=lambda item: item[0].name)
-        for i, (player, _) in enumerate(group):
-            label = player.label(name_font)
-            screen.blit(label, label.get_rect(midbottom=(x, bottom - i * (label.get_height() + 1))))
+        if not any(group is done for done in drawn):
+            x = sum(anchor[0] for _, anchor in group) / len(group)  # above the middle of the group
+            bottom = min(anchor[1] for _, anchor in group)           # above its highest tribute
+            draw_name_stack(screen, group, x, bottom, name_font)
+
+
+def draw_name_stack(screen, group, x, bottom, name_font):
+    """The names of a group, alphabetically, stacked upward from `bottom`, centered on `x`."""
+    for i, (player, _) in enumerate(sorted(group, key=lambda item: item[0].name)):
+        label = player.label(name_font)
+        screen.blit(label, label.get_rect(midbottom=(x, bottom - i * (label.get_height() + 1))))
 
 
 def is_quiet(sim, camera):
