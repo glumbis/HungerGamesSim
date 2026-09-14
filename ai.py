@@ -28,6 +28,7 @@ from config import (
     HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE, HIDE_MAX_AGGRESSION,
     AMBUSH_CHANCE, AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
     STEALTH_VISIBILITY, TRACKING_FACTOR, CHILL_CHANCE, CHILL_SECONDS, CHILL_START_PER_SECOND,
+    IDLE_SPREAD_FACTOR,
 )
 from utils import distance, angle_to
 
@@ -816,9 +817,12 @@ def follow_leader(player):
     player.prey = None
 
     to_leader = distance(player.x, player.y, leader.x, leader.y)
+    # When the group is standing still with nothing to do (the leader sitting,
+    # sleeping or drinking), members spread out around it instead of huddling
+    spread = IDLE_SPREAD_FACTOR if leader.state in (CHILLING, RESTING, DRINKING) else 1
 
     # Sleep when the leader sleeps, once close to it
-    if leader.state == RESTING and to_leader <= FOLLOW_SPREAD * 2:
+    if leader.state == RESTING and to_leader <= FOLLOW_SPREAD * 2 * spread:
         set_state(player, RESTING)
         player.target = None
         return
@@ -837,7 +841,7 @@ def follow_leader(player):
     # Otherwise keep to the member's own spot next to the leader
     set_state(player, FOLLOWING)
     offset_x, offset_y = player.follow_offset
-    spot = clamp_to_arena(leader.x + offset_x, leader.y + offset_y, ARRIVE_DISTANCE)
+    spot = clamp_to_arena(leader.x + offset_x * spread, leader.y + offset_y * spread, ARRIVE_DISTANCE)
     if distance(player.x, player.y, *spot) >= ARRIVE_DISTANCE:
         player.target = spot
         return

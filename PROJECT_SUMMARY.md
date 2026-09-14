@@ -126,8 +126,9 @@ bloodthirsty alliance that rushes the horn together.
 - Offered face to face; chance depends on both sides' willingness (district
   partners 90%, loners never). Max 6 members. Two alliances may merge (15%).
 - The strongest member leads and decides for the group using everyone's
-  sight and needs; members follow closely, join the leader's hunts and every
-  ally's fights, and share food and water. Big alliances (4+) camp near the
+  sight and needs; members follow closely (spreading out 3.5× further while
+  the group sits, sleeps or drinks: `IDLE_SPREAD_FACTOR`), join the leader's
+  hunts and every ally's fights, and share food and water. Big alliances (4+) camp near the
   cornucopia unless they left it in the opening.
 - Rare betrayals; an alliance breaks up when too few members are left, when
   only allies remain, or at the finale. Each alliance gets a name ("the
