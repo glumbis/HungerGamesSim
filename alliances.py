@@ -10,6 +10,7 @@ from config import (
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLIANCE_MERGE_CHANCE, SAME_DISTRICT_ALLIANCE_CHANCE,
     ALLY_SHARE_RANGE, FOLLOW_SPREAD,
     BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS, ALLIANCE_WILLINGNESS, SHOWDOWN_PLAYERS,
+    ALLIANCE_NAMES, ALLIANCE_ICON_SECONDS,
 )
 from utils import distance
 
@@ -47,6 +48,23 @@ def choose_style(first, second):
     return "opportunist"
 
 
+used_names = set()  # alliance names already given out this game (cleared in main.Simulation)
+records = {}        # alliance name -> most members it ever had (for the debrief awards)
+
+
+def choose_name(first, second):
+    """A name for a new alliance, e.g. "the Wolves". Two tributes from
+    Districts 1, 2 or 4 found "the Careers" if that name is still free."""
+    careers = {1, 2, 4}
+    if first.district in careers and second.district in careers and "the Careers" not in used_names:
+        name = "the Careers"
+    else:
+        free = [name for name in ALLIANCE_NAMES if name not in used_names and name != "the Careers"]
+        name = random.choice(free) if free else f"Alliance {len(used_names) + 1}"
+    used_names.add(name)
+    return name
+
+
 class Alliance:
     created = 0  # alliances created so far; used to give each its own color
 
@@ -56,6 +74,7 @@ class Alliance:
         Alliance.created += 1
         self.leader = None
         self.style = choose_style(first, second)
+        self.name = choose_name(first, second)
         self.add(first)
         self.add(second)
         self.choose_new_leader()
@@ -70,6 +89,7 @@ class Alliance:
         self.members.append(player)
         player.alliance = self
         player.follow_offset = random_follow_offset()
+        records[self.name] = max(records.get(self.name, 0), len(self.members))
 
     def remove(self, player):
         """Take a player out of the alliance. Players who were allies once
@@ -137,12 +157,14 @@ def try_to_ally(player, other, chance=None):
     if group is None:
         alliance = Alliance(player, other)
         events.counts["alliances formed"] += 1
-        events.log(narration.alliance_formed(alliance, bloodbath=chance_given))
+        events.log(narration.alliance_formed(alliance, bloodbath=chance_given), "alliance")
+        events.add_marker(player.x, player.y, "heart", ALLIANCE_ICON_SECONDS)
     else:
         newcomer = other if group is player.alliance else player
         group.add(newcomer)
-        events.log(narration.pick(narration.ALLIANCE_JOINED,
-                                  newcomer=newcomer.name, leader=group.leader.name))
+        events.log(narration.pick(narration.ALLIANCE_JOINED, newcomer=newcomer.name,
+                                  leader=group.leader.name) + f" ({group.name})", "alliance")
+        events.add_marker(newcomer.x, newcomer.y, "heart", ALLIANCE_ICON_SECONDS)
     return True
 
 
@@ -169,8 +191,9 @@ def try_to_merge(player, other):
         other_group.members.remove(member)
         group.add(member)
     group.choose_new_leader()
-    events.log(narration.pick(narration.ALLIANCE_MERGED,
-                              names=group.names(), leader=group.leader.name))
+    events.log(narration.pick(narration.ALLIANCE_MERGED, names=group.names(),
+                              leader=group.leader.name) + f" They keep the name {group.name}.", "alliance")
+    events.add_marker(player.x, player.y, "heart", ALLIANCE_ICON_SECONDS)
     return True
 
 
@@ -193,7 +216,8 @@ def share_supplies(players):
 
 def disband(alliance, reason):
     if alliance.members:
-        events.log(narration.alliance_broke_up(alliance, reason))
+        events.log(narration.alliance_broke_up(alliance, reason), "alliance")
+        events.add_marker(alliance.members[0].x, alliance.members[0].y, "broken", ALLIANCE_ICON_SECONDS)
     for member in list(alliance.members):  # copy: remove() changes the list
         alliance.remove(member)
 
@@ -208,7 +232,9 @@ def betray(player):
     player.prey_last_seen = (victim.x, victim.y)
     player.hunt_timer = 0
     events.counts["betrayals"] += 1
-    events.log(narration.pick(narration.BETRAYAL, traitor=player.name, victim=victim.name))
+    player.betrayals = getattr(player, "betrayals", 0) + 1  # getattr: 0 if never set before
+    events.log(narration.pick(narration.BETRAYAL, traitor=player.name, victim=victim.name), "alliance")
+    events.add_marker(player.x, player.y, "broken", ALLIANCE_ICON_SECONDS)
 
     if len(alliance.members) < 2:
         disband(alliance, "betrayal")

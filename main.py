@@ -8,17 +8,21 @@ from config import (
     SHOWDOWN_PLAYERS, SPEED_LEVELS, HUD_TEXT_COLOR, RUSH_DURATION,
     COUNTDOWN_SECONDS, COUNTDOWN_TEXT_COLOR, CORNUCOPIA_COLOR, CAMERA_OPENING_ZOOM,
     MINIMAP_WIDTH, MINIMAP_BORDER, LULL_SECONDS, TERRAIN_COLORS, WIN_BANNER_SECONDS,
+    DEATH_MARK_SECONDS, PANEL_COLOR, PANEL_BORDER, SELECT_RING_COLOR, SKILL_DESCRIPTIONS,
+    NEED_WARNING_COLORS, FIRE_COLOR,
 )
 from player import Player
 from arena import Arena
 from camera import Camera
 from start_screen import run_start_screen
 from debrief import run_debrief
+from gamemakers import Gamemakers
 import ai
 import alliances
 import combat
 import events
 import narration
+from utils import distance
 
 
 def create_starting_players(arena, names):
@@ -37,12 +41,22 @@ class Simulation:
     the main loop can run it several times per frame (faster) or skip it
     (paused)."""
 
-    def __init__(self, names):
+    def __init__(self, names, seed=None):
+        # The seed decides every random choice, so the same seed replays the
+        # same Games (as long as the names and settings are the same)
+        self.seed = seed if seed is not None else random.randrange(1_000_000)
+        random.seed(self.seed)
+        alliances.used_names.clear()
+        alliances.records.clear()
+        alliances.Alliance.created = 0
         self.arena = Arena()
         self.players = create_starting_players(self.arena, names)
         self.all_players = list(self.players)  # everyone, including the fallen (for the debrief)
         for player in self.players:
             ai.set_state(player, ai.WAITING)
+        self.gamemakers = Gamemakers(self.arena)
+        ai.dangers = self.gamemakers
+        ai.night = False
         self.countdown_frames = COUNTDOWN_SECONDS * FPS  # players wait on their plates
         self.frames_since_start = 0
         self.opening_over = False   # True once the rush and flight from the cornucopia are done
@@ -51,8 +65,11 @@ class Simulation:
         ai.lull_active = False      # a new game starts without a quiet spell
         self.finale_announced = False
         self.game_over = False
+        self.alive_history = []     # tributes alive, once per second (for the debrief chart)
+        self.bloodbath_end_frame = None
+        self.finale_frame = None
 
-        print("Tributes:")
+        print(f"Seed {self.seed}. Tributes:")
         for player in self.players:
             print(f"  {player.name:>14}: {player.temperament}, {player.roaming} "
                   f"(aggression {player.aggression:.2f}, strength {player.strength:.1f}, "
@@ -65,9 +82,11 @@ class Simulation:
             if self.countdown_frames == 0:
                 for player in self.players:
                     ai.choose_opening_state(player, self.arena)
-                events.log(narration.pick(narration.GAMES_BEGIN))
+                events.log(narration.pick(narration.GAMES_BEGIN), "gamemaker")
             return
         self.frames_since_start += 1
+        if self.frames_since_start % FPS == 0:
+            self.alive_history.append(len(self.players))
 
         players = self.players  # shorter name for use below
 
@@ -84,6 +103,7 @@ class Simulation:
         self.arena.bloodbath = not self.opening_over  # fights starting now are bloodbath fights
         combat.handle_fights(players, self.arena)
         self.arena.update_flashes()
+        self.gamemakers.update(self)  # day and night, sponsors, fires, mutts, feast, ...
 
         # A long quiet spell (not during the opening or the finale): some
         # random players and alliances quietly head for the middle
@@ -99,14 +119,7 @@ class Simulation:
         survivors = [player for player in players if player.alive]
         for player in players:
             if not player.alive:
-                player.placement = len(survivors) + 1
-                player.death_frame = self.frames_since_start
-                if player.cause_of_death == "combat":
-                    how = narration.kill(player.name, player.killer_name,
-                                         player.killer_armed, player.died_in_bloodbath)
-                else:
-                    how = narration.death(player.name, player.cause_of_death)
-                events.log(f"{how} {narration.remaining(len(survivors))}")
+                self.record_death(player, len(survivors))
         self.players = survivors
 
         # Remove dead members, replace dead leaders, handle betrayals
@@ -120,24 +133,46 @@ class Simulation:
                 self.quiet_frames >= BLOODBATH_END_QUIET_SECONDS * FPS and \
                 not any(player.state in opening_states for player in self.players):
             self.opening_over = True
+            self.bloodbath_end_frame = self.frames_since_start
             self.bloodbath_deaths = NUM_PLAYERS - len(self.players)
-            events.log(narration.bloodbath_over(self.bloodbath_deaths))
+            events.log(narration.bloodbath_over(self.bloodbath_deaths), "gamemaker")
 
         if not self.finale_announced and 1 < len(self.players) <= SHOWDOWN_PLAYERS:
             self.finale_announced = True
-            events.log(narration.pick(narration.FINALE, n=len(self.players)))
+            self.finale_frame = self.frames_since_start
+            events.log(narration.pick(narration.FINALE, n=len(self.players)), "gamemaker")
 
         if not self.game_over and len(self.players) <= 1:
             self.game_over = True
+            self.alive_history.append(len(self.players))
             if self.players:
                 winner = self.players[0]
                 winner.placement = 1
-                events.log(narration.pick(narration.WINNER, winner=winner.name, kills=winner.kills))
+                events.log(narration.pick(narration.WINNER, winner=winner.name, kills=winner.kills),
+                           "gamemaker")
             else:
-                events.log(narration.pick(narration.NO_SURVIVORS))
+                events.log(narration.pick(narration.NO_SURVIVORS), "gamemaker")
 
         # Living players pick up any loot they are touching
         self.arena.handle_pickups(self.players)
+
+    def record_death(self, player, remaining):
+        """Standings, a cross where it fell, a name for the night sky and the event text."""
+        player.placement = remaining + 1
+        player.death_frame = self.frames_since_start
+        self.gamemakers.fallen_today.append(player.name)
+        events.add_marker(player.x, player.y, "death", DEATH_MARK_SECONDS)
+        if player.cause_of_death == "combat":
+            if getattr(player, "revenge_victim", False):
+                how = narration.pick(narration.REVENGE_DONE, killer=player.killer_name, victim=player.name)
+            else:
+                how = narration.kill(player.name, player.killer_name,
+                                     player.killer_armed, player.died_in_bloodbath)
+            kind = "kill"
+        else:
+            how = narration.death(player.name, player.cause_of_death)
+            kind = "death"
+        events.log(f"{how} {narration.remaining(remaining)}", kind)
 
 
 # --- Drawing -----------------------------------------------------------------
@@ -170,14 +205,17 @@ def draw_legend(screen, font):
         y += 18
 
 
-def draw_hud(screen, font, speed, paused, camera):
-    """Speed, camera mode and key hints in the top-right corner."""
+def draw_hud(screen, font, speed, paused, camera, sim):
+    """Speed, camera mode, day and key hints in the top-right corner."""
     status = "PAUSED" if paused else f"Speed {speed:g}x"  # :g drops needless decimals (2.0 -> 2)
     camera_mode = "auto" if camera.auto else "manual"
+    time_of_day = "night" if sim.gamemakers.night else "day"
     lines = [
+        f"Day {sim.gamemakers.day} ({time_of_day})   {len(sim.players)} alive   Seed {sim.seed}",
         f"{status}   Camera: {camera_mode}",
         "Space: pause   Up/Down: speed   Tab: debug",
         "Wheel / drag / WASD: camera   F: follow   C: whole map",
+        "Click a tribute: details",
     ]
     for i, line in enumerate(lines):
         text = font.render(line, True, HUD_TEXT_COLOR)
@@ -212,6 +250,8 @@ def draw_minimap(screen, sim, camera):
         """A world position as a point on the minimap."""
         return int(map_rect.x + x * scale), int(map_rect.y + y * scale)
 
+    for x, y, _, _ in sim.gamemakers.hazards:
+        pygame.draw.circle(screen, FIRE_COLOR, to_map(x, y), 6, 1)
     pygame.draw.circle(screen, CORNUCOPIA_COLOR, to_map(sim.arena.center_x, sim.arena.center_y), 3)
     for player in sim.players:
         color = player.alliance.color if player.alliance is not None else PLAYER_COLOR
@@ -224,9 +264,63 @@ def draw_minimap(screen, sim, camera):
     pygame.draw.rect(screen, MINIMAP_BORDER, map_rect, 1)
 
 
-def draw(screen, fonts, sim, camera, debug, speed, paused):
+def draw_night(screen, sim):
+    """Darken the whole view at night (fading in at dusk and out at dawn)."""
+    darkness = sim.gamemakers.darkness(sim)
+    if darkness > 0:
+        shade = pygame.Surface(screen.get_size())
+        shade.fill((5, 10, 30))
+        shade.set_alpha(darkness)
+        screen.blit(shade, (0, 0))
+
+
+def inspector_lines(player):
+    """Everything worth knowing about one tribute, as lines of text."""
+    status = "alive" if player.alive else f"fallen (place {player.placement})"
+    alliance = f"{player.alliance.name} ({'leader' if player.alliance.leader is player else 'member'})" \
+        if player.alliance else ("never allies" if player.loner else "none")
+    weapon = player.weapon_type if player.inventory["weapon"] > 0 else "none"
+    lines = [
+        f"{player.name}  -  District {player.district}",
+        f"Status: {status}   State: {player.state}",
+        f"Traits: {player.temperament}, {player.roaming}" +
+        (f", {SKILL_DESCRIPTIONS[player.skill]}" if player.skill else ""),
+        f"Aggression {player.aggression:.2f}   Strength {player.fighting_strength():.1f}"
+        f"   Speed {player.speed:.2f}",
+        f"Kills: {player.kills}   Weapon: {weapon}",
+        f"Food {player.inventory['food']}   Water {player.inventory['water']}",
+        f"Alliance: {alliance}",
+    ]
+    if player.injury_timer > 0:
+        lines.append(f"Injured ({player.injury_timer // FPS} s)")
+    if player.nemesis is not None and player.nemesis.alive:
+        lines.append(f"Seeking revenge on {player.nemesis.name}")
+    return lines
+
+
+def draw_inspector(screen, font, player):
+    """A panel (top left) about the selected tribute, with its needs as bars."""
+    lines = inspector_lines(player)
+    width = 330
+    height = 16 + len(lines) * 18 + 3 * 14 + 8
+    panel = pygame.Rect(10, 10, width, height)
+    pygame.draw.rect(screen, PANEL_COLOR, panel, border_radius=6)
+    pygame.draw.rect(screen, PANEL_BORDER, panel, 1, border_radius=6)
+    y = panel.y + 8
+    for i, line in enumerate(lines):
+        screen.blit(font.render(line, True, PANEL_BORDER if i == 0 else HUD_TEXT_COLOR), (panel.x + 10, y))
+        y += 18
+    for name, value in player.needs.items():
+        screen.blit(font.render(name, True, HUD_TEXT_COLOR), (panel.x + 10, y))
+        pygame.draw.rect(screen, (50, 50, 50), (panel.x + 70, y + 3, 240, 8))
+        pygame.draw.rect(screen, NEED_WARNING_COLORS[name], (panel.x + 70, y + 3, int(240 * value / 100), 8))
+        y += 14
+
+
+def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None):
     font, big_font, name_font, banner_font = fonts
     sim.arena.draw(screen, camera)  # terrain, cornucopia, plates, loot, fight markers
+    sim.gamemakers.draw(screen, camera)  # fires, floods, mutts, parachutes, markers
 
     def on_screen(x, y):
         return camera.world_to_screen(x, y, screen)
@@ -246,21 +340,37 @@ def draw(screen, fonts, sim, camera, debug, speed, paused):
                              on_screen(player.x, player.y), on_screen(player.prey.x, player.prey.y))
     for player in sim.players:
         player.draw(screen, camera, name_font, debug)
+    if selected is not None and selected.alive:
+        pygame.draw.circle(screen, SELECT_RING_COLOR, on_screen(selected.x, selected.y), camera.size(9, 7), 1)
 
+    draw_night(screen, sim)
+    sim.gamemakers.draw_fallen(screen, font)
     draw_countdown(screen, big_font, sim)
     if sim.game_over:
         draw_big_text(screen, banner_font, f"{sim.players[0].name} wins!" if sim.players else "No victor")
     if debug:
         draw_legend(screen, font)
     events.draw(screen, font)
-    draw_hud(screen, font, speed, paused, camera)
+    draw_hud(screen, font, speed, paused, camera, sim)
     draw_minimap(screen, sim, camera)
+    if selected is not None:
+        draw_inspector(screen, font, selected)
     pygame.display.flip()
+
+
+def tribute_at(sim, camera, screen, position):
+    """The living tribute under a screen position (within a few pixels), or None."""
+    world_x, world_y = camera.screen_to_world(*position, screen)
+    closest = min(sim.players, default=None,
+                  key=lambda player: distance(player.x, player.y, world_x, world_y))
+    if closest is not None and distance(closest.x, closest.y, world_x, world_y) * camera.zoom <= 15:
+        return closest
+    return None
 
 
 # --- Running the Games -----------------------------------------------------
 
-def play(screen, clock, names):
+def play(screen, clock, names, seed=None):
     """Run one Games from the countdown until shortly after the winner is
     known. Returns the finished Simulation (for the debrief), or None if the
     window was closed."""
@@ -271,13 +381,15 @@ def play(screen, clock, names):
         pygame.font.Font(None, 80),   # winner banner
     )
     events.reset()
-    sim = Simulation(names)
+    sim = Simulation(names, seed)
     camera = Camera(sim.arena.center_x, sim.arena.center_y, CAMERA_OPENING_ZOOM)
     debug = False
     paused = False
     speed_index = SPEED_LEVELS.index(1)  # start at normal speed
     step_budget = 0.0  # simulation steps owed; lets speeds below 1 skip frames
     frames_after_end = 0  # frames the winner banner has been shown
+    selected = None       # the tribute shown in the inspector panel
+    press_position = None # where the left mouse button went down (to tell clicks from drags)
 
     while True:
         for event in pygame.event.get():
@@ -291,7 +403,16 @@ def play(screen, clock, names):
                 speed_index = min(speed_index + 1, len(SPEED_LEVELS) - 1)
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_DOWN:
                 speed_index = max(speed_index - 1, 0)
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                selected = None
             else:
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    press_position = event.pos
+                elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and press_position:
+                    moved = distance(*press_position, *event.pos)
+                    if moved < 5:  # a click, not a drag: select (or deselect) a tribute
+                        selected = tribute_at(sim, camera, screen, event.pos)
+                    press_position = None
                 camera.handle_event(event, screen)
 
         speed = SPEED_LEVELS[speed_index]
@@ -304,7 +425,7 @@ def play(screen, clock, names):
                 step_budget -= 1
 
         camera.update(sim, screen)
-        draw(screen, fonts, sim, camera, debug, speed, paused)
+        draw(screen, fonts, sim, camera, debug, speed, paused, selected)
         clock.tick(FPS)
 
         # Show the winner for a few seconds, then move on to the debrief
@@ -322,16 +443,20 @@ def main():
     clock = pygame.time.Clock()
 
     names = None  # the first start screen uses the default names
+    seed = None   # None = a new random seed
     while True:
-        names = run_start_screen(screen, clock, names)
-        if names is None:  # window closed on the start screen
-            break
-        sim = play(screen, clock, names)
+        if seed is None:
+            names = run_start_screen(screen, clock, names)
+            if names is None:  # window closed on the start screen
+                break
+        sim = play(screen, clock, names, seed)
         if sim is None:    # window closed during the Games
             break
-        if run_debrief(screen, clock, sim) == "quit":
+        choice = run_debrief(screen, clock, sim)
+        if choice == "quit":
             break
-        # "again": back to the start screen, keeping the names
+        # "replay": the same Games again (same seed); "again": new Games
+        seed = sim.seed if choice == "replay" else None
 
     pygame.quit()
 

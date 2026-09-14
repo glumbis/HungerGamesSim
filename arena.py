@@ -9,7 +9,7 @@ from config import (
     LOOT_COUNTS, LOOT_CENTER_FRACTION, LOOT_CENTER_SPREAD, LOOT_SIZE, LOOT_COLORS,
     CORNUCOPIA_SIZE, CORNUCOPIA_COLOR, CORNUCOPIA_OUTLINE_COLOR, PLATE_RADIUS, PLATE_COLOR,
     TERRAIN_COLORS, TERRAIN_WEIGHTS, TERRAIN_ZONES, TERRAIN_WARP, TERRAIN_CLEAR_RADIUS,
-    OUTSIDE_COLOR, BORDER_COLOR, MINIMAP_WIDTH,
+    OUTSIDE_COLOR, BORDER_COLOR, MINIMAP_WIDTH, WEAPON_TYPES,
 )
 from utils import distance
 
@@ -21,6 +21,8 @@ class LootItem:
 
     def __init__(self, kind, x, y, dropped_by=None):
         self.kind = kind  # "food", "water" or "weapon"
+        # Weapons come in types ("knife", "bow", ...), picked at random
+        self.weapon_type = random.choice(list(WEAPON_TYPES)) if kind == "weapon" else None
         # The player who dropped this item in a fight (None for spawned
         # loot). That player will not pick it back up.
         self.dropped_by = dropped_by
@@ -166,7 +168,7 @@ class Arena:
             for player in players:
                 if player.can_carry(item.kind) and player is not item.dropped_by and \
                         distance(player.x, player.y, item.x, item.y) <= pickup_distance:
-                    player.pick_up(item.kind)
+                    player.pick_up(item.kind, item.weapon_type)
                     item.taken = True
                     break  # only one player can take this item
             if not item.taken:

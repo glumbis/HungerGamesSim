@@ -18,6 +18,8 @@ from config import (
     SPRINT_SECONDS, STAMINA_RECOVERY_SECONDS, NAME_MIN_ZOOM, NAME_TEXT_COLOR,
     TERRAIN_SPEED, SAND_THIRST_FACTOR, MARSH_REFILL_SECONDS,
     WEAPON_ICON_COLOR, SLEEP_ICON_COLOR,
+    DISTRICT_SKILLS, WEAPON_TYPES, SKILL_WEAPON_BONUS, COMBAT_RANGE,
+    INJURY_SPEED_FACTOR, INJURY_STRENGTH_FACTOR, FORAGE_CHANCE, INJURY_COLOR,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -36,6 +38,14 @@ class Player:
         self.loner = False          # "no alliance" trait: never allies with anyone (set in main.py)
         self.killer_armed = False   # if killed in a fight: did the killer have a weapon? (for the event text)
         self.died_in_bloodbath = False
+        self.skill = DISTRICT_SKILLS.get(self.district)  # district skill, e.g. "fishing" (None for most)
+        self.weapon_type = None     # "knife", "bow", ... while carrying a weapon
+        self.injury_timer = 0       # frames left injured (slower and weaker)
+        self.hide_timer = 0         # frames left hiding up a tree (hard to spot)
+        self.ambush_timer = 0       # frames left lying in wait (killers)
+        self.ambush_spot = None     # where it lies in wait
+        self.nemesis = None         # the player who killed its district partner (revenge target)
+        self.days_survived = 0      # nights lived through (for awards)
         self.name_label = None      # the name and district rendered as an image, made the first time it is drawn
         self.x = x
         self.y = y
@@ -120,9 +130,25 @@ class Player:
         return self.inventory[kind] < CARRY_LIMITS[kind]
 
     def fighting_strength(self):
-        """Own strength plus the weapon bonus (without any help from allies)."""
-        bonus = WEAPON_STRENGTH_BONUS if self.inventory["weapon"] > 0 else 0
-        return self.strength + bonus
+        """Own strength plus the weapon's bonus (without any help from allies).
+        District skills add to it (trained Careers, axes, bows); an injury
+        lowers it."""
+        total = self.strength
+        if self.inventory["weapon"] > 0:
+            total += WEAPON_TYPES.get(self.weapon_type, (WEAPON_STRENGTH_BONUS, 0))[0]
+            if (self.skill, self.weapon_type) in (("axes", "axe"), ("archery", "bow")):
+                total += SKILL_WEAPON_BONUS
+        if self.skill == "training":
+            total += 2
+        if self.injury_timer > 0:
+            total *= INJURY_STRENGTH_FACTOR
+        return total
+
+    def fight_range(self):
+        """How close it must get to attack: a spear or bow reaches further."""
+        if self.inventory["weapon"] > 0:
+            return WEAPON_TYPES.get(self.weapon_type, (0, COMBAT_RANGE))[1]
+        return COMBAT_RANGE
 
     def current_speed(self):
         """How fast the player moves this frame.
@@ -150,6 +176,8 @@ class Player:
                     multiplier *= 0.5
         if self.stamina <= 0:
             multiplier = min(multiplier, 1.0)  # exhausted: no sprinting
+        if self.injury_timer > 0:
+            multiplier *= INJURY_SPEED_FACTOR
         return speed * multiplier * TERRAIN_SPEED.get(self.terrain, 1.0)
 
     def move(self):
@@ -200,7 +228,18 @@ class Player:
         """Lower every need by this player's decay rate (sleep recovers
         instead while resting). The player dies the moment any need
         reaches 0."""
+        if self.injury_timer > 0:
+            self.injury_timer -= 1
+        if self.hide_timer > 0:
+            self.hide_timer -= 1
+        # Farming tributes (District 11) find something to eat in forest and meadow
+        if self.skill == "farming" and self.terrain in ("forest", "meadow") and \
+                random.random() < FORAGE_CHANCE and self.can_carry("food"):
+            self.inventory["food"] += 1
         for name in self.needs:
+            if name == "hunger" and self.skill == "fishing" and self.terrain == "marsh":
+                self.needs[name] = min(NEED_MAX, self.needs[name] + MARSH_REFILL_RATE / 2)
+                continue  # District 4 fishes in the marsh
             if name == "sleep" and self.state == RESTING:
                 self.needs[name] = min(NEED_MAX, self.needs[name] + REST_RATE)
                 continue  # skip the decay below for this need
@@ -217,8 +256,11 @@ class Player:
                 self.cause_of_death = name
                 return  # already dead, no need to check the rest
 
-    def pick_up(self, kind):
+    def pick_up(self, kind, weapon_type=None):
         self.inventory[kind] += 1
+        if kind == "weapon":
+            # A weapon of the given type, or a random one if the type is unknown
+            self.weapon_type = weapon_type or random.choice(list(WEAPON_TYPES))
 
     def use_supplies(self):
         """Eat or drink a carried item once its need drops below the
@@ -249,7 +291,16 @@ class Player:
             color = self.alliance.color
         else:
             color = PLAYER_COLOR
-        pygame.draw.circle(screen, color, center, radius)
+        if self.hide_timer > 0:
+            # Hiding up a tree: only a faint outline shows where it is
+            pygame.draw.circle(screen, color, center, radius, 1)
+        else:
+            pygame.draw.circle(screen, color, center, radius)
+        if self.injury_timer > 0:
+            # Injured: a small red cross on the dot
+            arm = max(1, radius - 1)
+            pygame.draw.line(screen, INJURY_COLOR, (center[0] - arm, center[1]), (center[0] + arm, center[1]), 1)
+            pygame.draw.line(screen, INJURY_COLOR, (center[0], center[1] - arm), (center[0], center[1] + arm), 1)
         if self.alliance is not None and self.alliance.leader is self:
             # Ring = alliance leader (white normally, alliance color in debug view)
             ring_color = self.alliance.color if debug else LEADER_RING_COLOR
@@ -284,7 +335,12 @@ class Player:
         for slot, icon in enumerate(icons):
             # one symbol: centered; two: one left, one right of the center
             x = center[0] + (slot - (len(icons) - 1) / 2) * spacing
-            if icon == "weapon":
+            if icon == "weapon" and self.weapon_type == "bow":
+                # a bow: a curved arc with a straight string
+                pygame.draw.arc(screen, WEAPON_ICON_COLOR,
+                                (x - size, top, 2 * size, 2 * size), -1.4, 1.4, 1)
+                pygame.draw.line(screen, WEAPON_ICON_COLOR, (x, top), (x, top + 2 * size), 1)
+            elif icon == "weapon":
                 # a short diagonal blade with a small crossguard
                 pygame.draw.line(screen, WEAPON_ICON_COLOR,
                                  (x - size, top + 2 * size), (x + size, top), 2)

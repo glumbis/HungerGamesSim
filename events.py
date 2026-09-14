@@ -5,12 +5,15 @@ from collections import Counter
 from config import (
     FPS,
     FEED_MAX_LINES, FEED_SECONDS, FEED_LINE_HEIGHT, FEED_TEXT_COLOR, FEED_SHADOW_COLOR,
+    EVENT_COLORS,
 )
 
 entries = []     # events on screen, oldest first; each is [text, frames_left]
 history = []     # every event of the current game, oldest first (for the debrief)
 frame_count = 0  # frames since the start, used for the timestamps
 counts = Counter()  # how often some things happened, e.g. counts["betrayals"] (for the debrief)
+history_kinds = []  # the kind of each event in `history` (same order)
+markers = []        # short-lived symbols in the arena, each [x, y, kind, frames_left] ("heart", "broken", "death")
 
 
 def reset():
@@ -18,18 +21,21 @@ def reset():
     global frame_count  # see update() for what `global` does
     entries.clear()
     history.clear()
+    history_kinds.clear()
+    markers.clear()
     counts.clear()
     frame_count = 0
 
 
-def log(text):
+def log(text, kind="info"):
     """Record an event: print it, add it to the on-screen feed and keep it
-    in the history."""
+    in the history. `kind` ("kill", "alliance", ...) picks its color."""
     minutes, seconds = divmod(frame_count // FPS, 60)  # divmod gives (whole minutes, leftover seconds)
     stamped = f"{minutes}:{seconds:02d}  {text}"         # :02d pads to two digits, e.g. 1:05
     print(stamped)
     history.append(stamped)
-    entries.append([stamped, FEED_SECONDS * FPS])
+    history_kinds.append(kind)
+    entries.append([stamped, FEED_SECONDS * FPS, kind])
     del entries[:-FEED_MAX_LINES]  # keep only the newest FEED_MAX_LINES events
 
 
@@ -42,16 +48,25 @@ def update():
     for entry in entries:
         entry[1] -= 1
     entries[:] = [entry for entry in entries if entry[1] > 0]  # [:] replaces the contents in place
+    for marker in markers:
+        marker[3] -= 1
+    markers[:] = [marker for marker in markers if marker[3] > 0]
+
+
+def add_marker(x, y, kind, seconds):
+    """Show a symbol ("heart", "broken" or "death") at a spot in the arena for a while."""
+    markers.append([x, y, kind, int(seconds * FPS)])
 
 
 def draw(screen, font):
     """Newest event at the bottom, older ones above it. Each line has a dark
-    shadow for readability and fades out during its last second."""
+    shadow for readability, is colored by its kind, and fades out during its
+    last second."""
     y = screen.get_height() - 8 - FEED_LINE_HEIGHT * len(entries)
-    for text, frames_left in entries:
+    for text, frames_left, kind in entries:
         alpha = 255 if frames_left > FPS else int(255 * frames_left / FPS)  # 255 = fully visible
         shadow = font.render(text, True, FEED_SHADOW_COLOR)
-        label = font.render(text, True, FEED_TEXT_COLOR)
+        label = font.render(text, True, EVENT_COLORS.get(kind, FEED_TEXT_COLOR))
         shadow.set_alpha(alpha)
         label.set_alpha(alpha)
         screen.blit(shadow, (11, y + 1))

@@ -22,11 +22,15 @@ from config import (
     SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
     BLOODBATH_JOIN_CHANCE, CAMP_ALLIANCE_SIZE, CAMP_RADIUS, CENTER_PULL,
     LULL_GATHER_SHARE, GATHER_RADIUS, LULL_FIGHT_BONUS,
+    NIGHT_VISION_FACTOR, NIGHT_REST_BONUS, HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE,
+    HIDE_MAX_AGGRESSION, AMBUSH_CHANCE, AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
 )
+from utils import distance, angle_to
 
 # True from a quiet spell (see main.py) until the next fight starts (combat.py)
 lull_active = False
-from utils import distance, angle_to
+night = False    # True at night (set by gamemakers.py): players see less and sleep sooner
+dangers = None   # the Gamemakers object (set by main.py); asked where to run from fires, mutts, ...
 
 # Player states
 WAITING = "WAITING"             # on the launch plate during the countdown
@@ -46,6 +50,8 @@ FIGHTING = "FIGHTING"           # locked in a fight until it is decided
 INVESTIGATING = "INVESTIGATING" # heard a fight and is going to see what is happening
 CONVERGING = "CONVERGING"       # finale: heading for the cornucopia
 DRINKING = "DRINKING"           # standing in marsh, drinking
+HIDING = "HIDING"               # up a tree in the forest, hard to spot
+AMBUSHING = "AMBUSHING"         # a killer lying in wait by water or supplies
 
 # Dot color for each state in the debug view
 STATE_COLORS = {
@@ -66,6 +72,8 @@ STATE_COLORS = {
     INVESTIGATING: (255, 190, 120), # peach
     CONVERGING: (205, 165, 70),     # gold
     DRINKING: (90, 220, 255),       # light blue
+    HIDING: (60, 140, 60),          # dark green
+    AMBUSHING: (150, 40, 40),       # dark red
 }
 
 # How a player reacts to another player it sees
@@ -299,12 +307,16 @@ def look_around(player, arena, players):
     # Alliance members keep watch for each other, so they notice other
     # players from further away than a player on its own would
     radius = ALLIANCE_SENSE_RADIUS if player.alliance is not None else VISION_RADIUS
+    if night:
+        radius *= NIGHT_VISION_FACTOR
     # Players running out at the start are left alone: nobody attacks them
-    # or offers them an alliance until they have finished fleeing
+    # or offers them an alliance until they have finished fleeing. Players
+    # hiding up a tree can only be spotted from right next to them.
     player.visible_players = [
         other for other in players
         if other is not player and other.alive and not is_ally(player, other)
         and other.state != FLEE_OUTWARD and can_see(player, other, radius)
+        and (other.hide_timer == 0 or distance(player.x, player.y, other.x, other.y) <= HIDE_SPOT_DISTANCE)
     ]
 
 
@@ -371,7 +383,8 @@ def most_urgent_need(members, state):
     If several count, the one with the lowest value wins."""
     urgent = {}  # what is needed -> lowest value of that need in the group
     lowest_sleep = min(member.needs["sleep"] for member in members)
-    if lowest_sleep < REST_THRESHOLD or (state == RESTING and lowest_sleep < REST_UNTIL):
+    threshold = REST_THRESHOLD + (NIGHT_REST_BONUS if night else 0)  # tired sooner at night
+    if lowest_sleep < threshold or (state == RESTING and lowest_sleep < REST_UNTIL):
         urgent["sleep"] = lowest_sleep
     for kind, need in LOOT_RESTORES.items():  # ("food", "hunger"), ("water", "thirst")
         lowest = min(member.needs[need] for member in members)
@@ -398,6 +411,11 @@ def fight_chance(player, other=None):
     chance = base_fight_chance(player, other)
     if lull_active and chance < 0.5:
         chance += LULL_FIGHT_BONUS
+    if other is not None and other.kills >= FEARED_KILLS:
+        # A feared tribute: most keep away, but killers want the glory
+        chance *= 1.3 if player.temperament == "killer" else FEARED_FACTOR
+    if other is not None and other is player.nemesis:
+        chance = 1.0  # revenge
     return min(chance, 1.0)
 
 
@@ -590,14 +608,14 @@ def track(leader, players):
     return True
 
 
-def send_to_middle(players, arena):
-    """After a long quiet spell, quietly (no announcement) a random share of
-    the players who decide for themselves — loners and alliance leaders —
-    start walking toward the cornucopia, so tributes run into each other
-    again. Alliance members simply follow their leader."""
+def send_to_middle(players, arena, share=LULL_GATHER_SHARE):
+    """After a long quiet spell (or when the feast is announced), a random
+    share of the players who decide for themselves — loners and alliance
+    leaders — start walking toward the cornucopia, so tributes run into each
+    other again. Alliance members simply follow their leader."""
     deciders = [player for player in players if player.fight is None and
                 (player.alliance is None or player.alliance.leader is player)]
-    count = min(len(deciders), max(2, round(len(deciders) * LULL_GATHER_SHARE)))
+    count = min(len(deciders), max(2, round(len(deciders) * share)))
     for player in random.sample(deciders, count):
         # A point near the cornucopia, a little different for each player
         angle = random.uniform(0, 2 * math.pi)
@@ -642,6 +660,100 @@ def respond_to_noise(player):
             return False
         start_avoiding(player, noise_x, noise_y)
     return True
+
+
+def flee_danger(player):
+    """Run from a Gamemaker danger (fire, flood, mutts, the shrinking edge).
+    Returns True if running this frame."""
+    if dangers is None:
+        return False
+    point = dangers.escape_point(player)
+    if point is None:
+        return False
+    set_state(player, AVOIDING)
+    player.target = clamp_to_arena(*point, ARRIVE_DISTANCE)
+    player.hide_timer = 0
+    player.ambush_timer = 0
+    return True
+
+
+def try_to_hide(player):
+    """A cautious player being hunted while in forest may climb a tree and
+    stay hidden for a while (like Katniss). Returns True if hiding this frame."""
+    if player.hide_timer > 0:
+        set_state(player, "HIDING")
+        player.target = None
+        return True
+    hunted = any(other.prey is player for other in player.visible_players)
+    if hunted and player.terrain == "forest" and player.aggression <= HIDE_MAX_AGGRESSION \
+            and random.random() < HIDE_CHANCE:
+        player.hide_timer = HIDE_SECONDS * FPS
+        stop_hunting(player)
+        for other in player.visible_players:
+            if other.prey is player:
+                stop_hunting(other, cooldown=True)  # lost sight of it in the branches
+        events_log(narration_pick("HIDE", name=player.name))
+        set_state(player, "HIDING")
+        player.target = None
+        return True
+    return False
+
+
+def ambush(player, arena):
+    """An idle killer on its own (District 3 more often) may lie in wait next to
+    marsh or loot, holding still until someone walks by. Returns True if waiting."""
+    if player.ambush_timer > 0:
+        player.ambush_timer -= 1
+        if distance(player.x, player.y, *player.ambush_spot) > ARRIVE_DISTANCE:
+            set_state(player, TRACKING)
+            player.target = player.ambush_spot
+        else:
+            set_state(player, "AMBUSHING")
+            player.target = None
+        return True
+    if player.temperament != "killer" or player.alliance is not None:
+        return False
+    chance = AMBUSH_CHANCE * (2 if player.skill == "traps" else 1) / (10 * FPS)
+    if random.random() >= chance:
+        return False
+    spot = arena.find_terrain(player.x, player.y, "marsh", 400)
+    place = "water"
+    if spot is None:
+        item = nearest(player, list(player.known_loot))
+        if item is None:
+            return False
+        spot, place = (item.x + 15, item.y + 15), "supplies"
+    player.ambush_spot = clamp_to_arena(*spot, ARRIVE_DISTANCE)
+    player.ambush_timer = AMBUSH_SECONDS * FPS
+    events_log(narration_pick("AMBUSH_SET", name=player.name, spot=place))
+    return True
+
+
+def seek_revenge(player, players):
+    """Head for the killer of this player's district partner, if it is
+    within REVENGE_RADIUS. Returns True if doing so this frame."""
+    nemesis = player.nemesis
+    if nemesis is None:
+        return False
+    if not nemesis.alive or is_ally(player, nemesis):
+        player.nemesis = None
+        return False
+    if distance(player.x, player.y, nemesis.x, nemesis.y) > REVENGE_RADIUS:
+        return False
+    set_state(player, TRACKING)
+    player.target = (nemesis.x, nemesis.y)
+    return True
+
+
+def events_log(text):
+    """Log an event from here (imported late to avoid a circular import)."""
+    import events
+    events.log(text)
+
+
+def narration_pick(list_name, **names):
+    import narration
+    return narration.pick(getattr(narration, list_name), **names)
 
 
 def follow_leader(player):
@@ -754,6 +866,10 @@ def decide(player, arena, players):
             return
         player.collapsed = False  # rested: back to normal
 
+    # 0a2. Gamemaker dangers (fire, flood, mutts, the closing edge): run
+    if player.state not in (WAITING, FLEE_OUTWARD, RUSH_LOOT) and flee_danger(player):
+        return
+
     # 0b. Endgame finale: the last few tributes meet at the cornucopia
     if 1 < len(players) <= SHOWDOWN_PLAYERS:
         showdown(player, players, arena)
@@ -848,6 +964,10 @@ def decide(player, arena, players):
         player.explore_point = None
         player.search_point = None
 
+    # 3c. Hiding up a tree from a hunter (cautious loners in forest)
+    if player.alliance is None and try_to_hide(player):
+        return
+
     # Players on their own use what they see; leaders use the whole group's view
     if player.alliance is not None:
         visible_loot, visible_players, known_loot = shared_view(player)
@@ -925,8 +1045,16 @@ def decide(player, arena, players):
     if respond_to_noise(player):
         return
 
-    # 7. The Gamemakers revealed a player to go after (after a quiet spell)
+    # 6b. Revenge: go after the district partner's killer
+    if seek_revenge(player, players):
+        return
+
+    # 7. Heading for the middle (after a quiet spell, or for the feast)
     if follow_tip(player):
+        return
+
+    # 7b. A killer on its own lying in wait by water or supplies
+    if ambush(player, arena):
         return
 
     # 8. Collect loot in sight that can still be carried

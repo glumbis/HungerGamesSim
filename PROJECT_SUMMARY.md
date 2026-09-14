@@ -280,6 +280,42 @@ the next step onward.)
   line is picked at random each time. Escapes, standoffs and mutual losses
   are now logged too. The debrief counts alliances and betrayals through
   `events.counts` instead of searching the log text.
+- **Book features round (20 suggestions + alliance names)** — new module
+  `gamemakers.py` (class `Gamemakers`, created by `main.Simulation`, reached
+  from the AI through `ai.dangers`):
+  day/night cycle (70 s days, last 40% night: darker overlay, vision ×0.7,
+  sleepier; nightfall shows the day's fallen at the top of the screen, dawn
+  starts the next day); sponsor parachutes every 12 s to struggling
+  tributes, weighted toward kills, big alliances and District 1; Gamemaker
+  events every 50–80 s near a random tribute (fire or flood circles with a
+  small death chance per frame, or 2–4 mutts that chase the nearest tribute
+  and kill or injure it); the arena shrinks toward the cornucopia from 8
+  tributes left over 150 s (outside is deadly); a feast at 9 left sends 40%
+  of loners and leaders to the middle and drops supplies there. Tributes run
+  from all of these first (`ai.flee_danger`). AI additions: cautious loners
+  being hunted in forest may hide up a tree (`HIDING`, only visible from
+  12 px); idle lone killers set ambushes by marsh or supplies (`AMBUSHING`,
+  ×1.4 strength when sprung); district partners (not cowards, 40%) swear
+  revenge on a killer (not for bloodbath deaths) and track it within 400 px;
+  tributes with 3+ kills are feared (others ×0.6 fight chance, killers ×1.3).
+  District skills (`DISTRICT_SKILLS`): 1 sponsor favorite, 2 +2 strength,
+  3 more ambushes, 4 fishing in marsh, 5 escapes more, 7 axes +3, 11
+  forages food, 12 bows +3. Weapon types knife/spear/axe/sword/bow with own
+  strength and reach (spear 14, bow 30; everyone fights at 10 px during the
+  bloodbath). Injuries (30 s, ×0.7 speed and strength) after escaping a
+  fight, a mutual loss or a mutt. Visuals: red cross on injured dots, faint
+  outline when hiding, bow icon, crosses where tributes fell, hearts /
+  broken hearts for alliance news, parachutes, hazards, mutts and the
+  shrinking ring (also on the minimap). Click a tribute for an inspector
+  panel (Esc closes). Event feed colored by kind (`EVENT_COLORS`). Alliances
+  get names (`ALLIANCE_NAMES`; founders from Districts 1/2/4 become "the
+  Careers"). Seeds: every Games has a seed shown in the HUD and debrief; R
+  in the debrief replays the same seed. Debrief: awards, a chart of
+  tributes alive over time, colored events, click a tribute to see only its
+  story. Automatic tests in `tests/` (`python -m unittest`). Pace: needs
+  last longer (hunger 210 s, thirst 170 s, sleep 100 s), fights less deadly
+  (0.65/0.15/0.20), quiet spell 45 s, hunts give up after 5 s, tracking
+  220 px and only for fight chance ≥ 0.9, fights heard within 220 px.
 
 All planned features, including the post-run summary (the debrief), are
 implemented.

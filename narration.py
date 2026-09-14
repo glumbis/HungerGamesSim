@@ -288,6 +288,123 @@ NO_SURVIVORS = [
 ]
 
 
+ALLIANCE_NAMED = [
+    "They call themselves {alliance}.",
+    "The Capitol already calls them {alliance}.",
+    "The commentators dub them {alliance}.",
+    "Soon the whole of Panem knows them as {alliance}.",
+]
+
+SPONSOR_GIFT = [
+    "A silver parachute drifts down to {name}: {item}!",
+    "A sponsor sends {name} {item}. Someone out there is betting on them.",
+    "Chimes ring out as a parachute lands beside {name} carrying {item}.",
+    "{name} looks up to see a silver parachute with {item}.",
+    "Haymitch would be proud: {name} receives {item} from a sponsor.",
+    "The sponsors reward {name} with {item}.",
+]
+
+FIRE = [
+    "The Gamemakers set the {area} ablaze! Tributes run from the flames.",
+    "A wall of fire sweeps through the {area}!",
+    "Fireballs rain down on the {area}. The Gamemakers want action.",
+    "Smoke billows as the {area} bursts into flames.",
+]
+FLOOD = [
+    "Water surges through the {area}! The Gamemakers have opened the floodgates.",
+    "A sudden flood swallows the {area}!",
+    "The ground in the {area} turns to rushing water.",
+]
+MUTTS = [
+    "A howl echoes through the arena. The Gamemakers have released {n} mutts!",
+    "{n} snarling mutts burst from the {area}!",
+    "Something unnatural stalks the {area}: {n} mutts are loose.",
+    "The Gamemakers unleash {n} wolf-like mutts on the tributes.",
+]
+MUTT_KILL = [
+    "Mutts tear {victim} apart. A cannon fires.",
+    "{victim} can't outrun the mutts. BOOM.",
+    "The mutts drag {victim} down. The cannon sounds.",
+    "{victim} falls to the Gamemakers' beasts.",
+]
+MUTT_ESCAPE = [
+    "{victim} fights off a mutt, but is badly hurt.",
+    "{victim} escapes the mutts, bleeding.",
+    "A mutt's claws rake {victim}, who barely gets away.",
+]
+FIRE_KILL = [
+    "{victim} is caught in the flames. A cannon fires.",
+    "The fire claims {victim}. BOOM.",
+    "{victim} couldn't escape the Gamemakers' fire.",
+]
+FLOOD_KILL = [
+    "{victim} is swept away by the flood. A cannon fires.",
+    "The rushing water drowns {victim}.",
+    "{victim} disappears beneath the floodwater. BOOM.",
+]
+SHRINK = [
+    "The arena begins to close in. The Gamemakers force the last tributes together.",
+    "A deadly force field starts to shrink toward the cornucopia.",
+    "The edges of the arena turn deadly. Everyone must move inward.",
+]
+SHRINK_KILL = [
+    "{victim} is caught outside the shrinking arena. A cannon fires.",
+    "The closing boundary claims {victim}.",
+]
+FEAST_ANNOUNCED = [
+    "Claudius Templesmith announces a feast at the cornucopia! Each tribute needs something desperately.",
+    "\"Attention, tributes!\" A feast will be held at the cornucopia.",
+    "The Gamemakers invite the tributes to a feast at the cornucopia. Few will refuse.",
+]
+FEAST_READY = [
+    "The feast table rises at the cornucopia, loaded with supplies.",
+    "Supplies appear at the cornucopia. The feast has begun.",
+]
+HIDE = [
+    "{name} scrambles up a tree to hide.",
+    "{name} vanishes into the branches above.",
+    "{name} climbs out of reach and holds perfectly still.",
+    "{name} hides high in the canopy, heart pounding.",
+]
+AMBUSH_SET = [
+    "{name} lies in wait by the {spot}.",
+    "{name} sets a trap near the {spot} and waits.",
+    "{name} crouches in the undergrowth near the {spot}, watching.",
+]
+AMBUSH_SPRUNG = [
+    "{killer} springs the ambush on {victim}!",
+    "{victim} walks straight into {killer}'s trap!",
+    "Out of nowhere, {killer} leaps at {victim}!",
+]
+REVENGE_SWORN = [
+    "{name} swears vengeance on {killer} for their district partner.",
+    "{name} will not forget what {killer} did to their district partner.",
+    "Grief turns to rage: {name} is hunting {killer}.",
+]
+REVENGE_DONE = [
+    "{killer} avenges their district partner. {victim} is dead.",
+    "Revenge: {killer} kills {victim}, their district partner's killer.",
+]
+FEARED = [
+    "{name} has {kills} kills. The other tributes fear them now.",
+    "With {kills} kills, {name} is the most dangerous tribute in the arena.",
+    "Panem whispers {name}'s name: {kills} kills and counting.",
+]
+NIGHTFALL = [
+    "Night falls on day {day}. The anthem plays and the fallen appear in the sky.",
+    "Darkness settles over the arena. Day {day} is over.",
+    "The Capitol seal lights the sky at the end of day {day}.",
+]
+NIGHTFALL_NONE = [
+    "Night falls on day {day}. No faces appear in the sky tonight.",
+    "The anthem plays after day {day}, but the sky stays empty.",
+]
+DAWN = [
+    "Dawn breaks over the arena. Day {day} begins.",
+    "The sun rises on day {day} of the Games.",
+]
+
+
 def kill(victim, killer, armed, bloodbath):
     lines = KILL_ARMED if armed else KILL_UNARMED
     if bloodbath:
@@ -296,7 +413,8 @@ def kill(victim, killer, armed, bloodbath):
 
 
 def death(victim, cause):
-    lines = {"hunger": DEATH_HUNGER, "thirst": DEATH_THIRST, "sleep": DEATH_SLEEP}
+    lines = {"hunger": DEATH_HUNGER, "thirst": DEATH_THIRST, "sleep": DEATH_SLEEP,
+             "fire": FIRE_KILL, "flood": FLOOD_KILL, "mutts": MUTT_KILL, "arena": SHRINK_KILL}
     return pick(lines.get(cause, DEATH_OTHER), victim=victim)
 
 
@@ -307,7 +425,8 @@ def remaining(n):
 def alliance_formed(alliance, bloodbath):
     lines = ALLIANCE_FORMED + (ALLIANCE_FORMED_BLOODBATH if bloodbath else [])
     others = ", ".join(member.name for member in alliance.members if member is not alliance.leader)
-    return pick(lines, names=alliance.names(), leader=alliance.leader.name, others=others)
+    line = pick(lines, names=alliance.names(), leader=alliance.leader.name, others=others)
+    return line + " " + pick(ALLIANCE_NAMED, alliance=alliance.name)
 
 
 def alliance_broke_up(alliance, reason):

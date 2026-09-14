@@ -13,6 +13,7 @@ from config import (
     FIGHT_DURATION_MIN, FIGHT_DURATION_MAX, FIGHT_ALERT_RADIUS, ALERT_SECONDS,
     TIRED_ESCAPE_FACTOR, BLOODBATH_OUTCOME_WEIGHTS, BLOODBATH_ESCAPE_FACTOR,
     CHASE_MIN_SECONDS, CHASER_STRENGTH_FACTOR, CHASED_ESCAPE_FACTOR,
+    AMBUSH_STRENGTH_FACTOR, INJURY_SECONDS, INJURY_SPEED_FACTOR, FEARED_KILLS, REVENGE_CHANCE,
 )
 import ai
 import events
@@ -35,6 +36,8 @@ class Fight:
         self.to_the_death = to_the_death  # True in the finale
         self.bloodbath = bloodbath        # True if it started during the opening bloodbath
         self.chase = was_chasing(attacker)  # True if the attacker ran its prey down
+        # True if the attacker sprang an ambush (it was lying in wait)
+        self.ambush = attacker.ambush_timer > 0 or attacker.state == "AMBUSHING"
         self.x = (attacker.x + defender.x) / 2  # where the fight is happening
         self.y = (attacker.y + defender.y) / 2
         self.frames_left = int(random.uniform(FIGHT_DURATION_MIN, FIGHT_DURATION_MAX) * FPS)
@@ -73,7 +76,10 @@ def handle_fights(players, arena):
             continue  # one of them is already fighting
         if attacker.retreat_timer > 0 or defender.retreat_timer > 0:
             continue  # one of them has only just fought
-        if distance(attacker.x, attacker.y, defender.x, defender.y) <= COMBAT_RANGE:
+        # In the crush of the bloodbath there is no room for bows and spears:
+        # everyone fights at arm's length
+        reach = COMBAT_RANGE if arena.bloodbath else attacker.fight_range()
+        if distance(attacker.x, attacker.y, defender.x, defender.y) <= reach:
             start_fight(attacker, defender, arena, players, finale)
 
     # Count down the fights in progress. We loop over a copy (list(...))
@@ -85,11 +91,16 @@ def handle_fights(players, arena):
         elif fight.frames_left <= 0:
             end_fight(fight, arena)
             resolve_fight(fight.attacker, fight.defender, arena,
-                          fight.to_the_death, fight.bloodbath, fight.chase)
+                          fight.to_the_death, fight.bloodbath, fight.chase, fight.ambush, players)
 
 
 def start_fight(attacker, defender, arena, players, to_the_death):
     fight = Fight(attacker, defender, to_the_death, arena.bloodbath)
+    if fight.ambush:
+        attacker.ambush_timer = 0
+        events.log(narration.pick(narration.AMBUSH_SPRUNG, killer=attacker.name, victim=defender.name), "fight")
+    for fighter in (attacker, defender):
+        fighter.hide_timer = 0  # nobody stays hidden in a fight
     arena.fights.append(fight)
     arena.frames_since_fight = 0  # the arena is no longer quiet
     ai.lull_active = False        # so the quiet-spell boldness ends
@@ -114,14 +125,18 @@ def end_fight(fight, arena):
     fight.defender.fight = None
 
 
-def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=False):
+def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=False,
+                  ambushed=False, players=()):
     """Decide how a finished fight turned out. Bloodbath fights (started during
     the opening) are deadlier: other outcome weights and fewer escapes. At the
-    end of a chase the chaser is stronger and the chased player escapes less."""
+    end of a chase the chaser is stronger and the chased player escapes less.
+    An ambusher is stronger too. Losers who escape are injured for a while."""
     strength_a = effective_strength(attacker)
     strength_d = effective_strength(defender)
     if chase:
         strength_a *= CHASER_STRENGTH_FACTOR
+    if ambushed:
+        strength_a *= AMBUSH_STRENGTH_FACTOR
     arena.add_flash((attacker.x + defender.x) / 2, (attacker.y + defender.y) / 2)
 
     # Who comes out on top: the chance is each side's share of the total strength
@@ -151,14 +166,19 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=Fals
             escape_chance *= BLOODBATH_ESCAPE_FACTOR  # hard to get away in the chaos
         if chase and loser is defender:
             escape_chance *= CHASED_ESCAPE_FACTOR  # run down: hard to get away
+        if loser.skill == "cunning":
+            escape_chance = min(ESCAPE_MAX, escape_chance * 1.5)  # District 5: slippery
+        if loser.injury_timer > 0:
+            escape_chance *= INJURY_SPEED_FACTOR  # already hurt: harder to get away
         if to_the_death:
             escape_chance = 0  # ...and in the finale nobody escapes
         if random.random() < escape_chance:
             drop_items(loser, arena, ESCAPE_DROP_FRACTION)
             retreat(winner, loser)
             retreat(loser, winner)
+            loser.injury_timer = INJURY_SECONDS * FPS
             print(summary + f"{loser.name} lost but escaped, dropping supplies.")
-            events.log(narration.pick(narration.ESCAPE, loser=loser.name, winner=winner.name))
+            events.log(narration.pick(narration.ESCAPE, loser=loser.name, winner=winner.name), "fight")
         else:
             loser.alive = False
             loser.cause_of_death = "combat"
@@ -170,18 +190,37 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=Fals
             drop_items(loser, arena, 1.0)  # everything it carried
             stop_hunting(winner)
             print(summary + f"{winner.name} eliminated {loser.name}.")
+            after_kill(winner, loser, players)
     elif outcome == STANDOFF:
         retreat(attacker, defender)
         retreat(defender, attacker)
         print(summary + "standoff, both backed off.")
-        events.log(narration.pick(narration.STANDOFF, a=attacker.name, b=defender.name))
+        events.log(narration.pick(narration.STANDOFF, a=attacker.name, b=defender.name), "fight")
     else:  # MUTUAL_LOSS
         drop_random_item(attacker, arena)
         drop_random_item(defender, arena)
         retreat(attacker, defender)
         retreat(defender, attacker)
+        attacker.injury_timer = defender.injury_timer = INJURY_SECONDS * FPS
         print(summary + "both hurt, each dropped an item and backed off.")
-        events.log(narration.pick(narration.MUTUAL_LOSS, a=attacker.name, b=defender.name))
+        events.log(narration.pick(narration.MUTUAL_LOSS, a=attacker.name, b=defender.name), "fight")
+
+
+def after_kill(winner, loser, players):
+    """What a kill sets in motion: revenge by the victim's district partner,
+    a message when the victim was the killer's own nemesis, and fear once a
+    tribute reaches FEARED_KILLS kills."""
+    if winner.nemesis is loser:
+        winner.nemesis = None
+        loser.revenge_victim = True  # main.py uses the revenge lines for this death
+    for partner in players:
+        if partner is not loser and partner is not winner and partner.alive and \
+                partner.district == loser.district and partner.temperament != "coward" and \
+                not loser.died_in_bloodbath and random.random() < REVENGE_CHANCE:
+            partner.nemesis = winner
+            events.log(narration.pick(narration.REVENGE_SWORN, name=partner.name, killer=winner.name), "fight")
+    if winner.kills == FEARED_KILLS:
+        events.log(narration.pick(narration.FEARED, name=winner.name, kills=winner.kills), "fight")
 
 
 def retreat(player, opponent):

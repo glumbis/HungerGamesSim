@@ -27,9 +27,9 @@ NEED_WARNING_THRESHOLD = 30 # warning dot appears below this value
 # Roughly how many seconds each need takes to drop from full to 0.
 # These are short on purpose so deaths are visible while testing.
 NEED_SECONDS_TO_EMPTY = {
-    "hunger": 160,
-    "thirst": 130,
-    "sleep": 85,           # sleep runs out fastest, so players must rest regularly
+    "hunger": 210,
+    "thirst": 170,
+    "sleep": 100,          # sleep runs out fastest, so players must rest regularly
 }
 NEED_RATE_VARIATION = 0.25  # each player's rate is up to 25% faster/slower
 
@@ -160,7 +160,7 @@ BLOODBATH_OUTCOME_WEIGHTS = {
     "STANDOFF": 0.0,
     "MUTUAL_LOSS": 0.0,
 }
-BLOODBATH_ESCAPE_FACTOR = 0.15  # a loser's usual escape chance is multiplied by this
+BLOODBATH_ESCAPE_FACTOR = 0.6 # a loser's usual escape chance is multiplied by this
 BLOODBATH_ALLIANCE_CHANCE = 0.17# chance two lone rushers next to each other form a new alliance...
 BLOODBATH_JOIN_CHANCE = 0.7     # ...but a rusher joins an existing alliance much more readily (fewer, bigger groups)
 CORNUCOPIA_SIZE = 70        # size of the golden horn (world pixels)
@@ -258,10 +258,10 @@ STALK_DISTANCE = 20         # hunters wait this far from prey that can't be atta
 FIGHT_DURATION_MIN = 1.0    # a fight lasts between these many seconds; the two
 FIGHT_DURATION_MAX = 3.0    # fighters stand still until it is decided
 FIGHT_RING_COLOR = (255, 110, 60)  # pulsing ring around a fight in progress
-FIGHT_ALERT_RADIUS = 300    # players this close hear a fight start
+FIGHT_ALERT_RADIUS = 220    # players this close hear a fight start
 ALERT_SECONDS = 8           # how long a player remembers where it heard a fight
-INVESTIGATE_MIN_FIGHT_CHANCE = 0.7  # only players at least this likely to fight go toward a fight they hear
-LULL_SECONDS = 25           # no fight for this long: some random players/alliances head for the middle...
+INVESTIGATE_MIN_FIGHT_CHANCE = 0.8  # only players at least this likely to fight go toward a fight they hear
+LULL_SECONDS = 45          # no fight for this long: some random players/alliances head for the middle...
 LULL_FIGHT_BONUS = 0.15     # ...and until the next fight, players who usually avoid (fight chance < 0.5) get this added
 TIP_SECONDS = 25            # ...for at most this long...
 LULL_GATHER_SHARE = 0.4     # ...this share of the loners and alliance leaders (at least 2)...
@@ -275,9 +275,9 @@ SPRINT_SECONDS = 4          # full stamina lasts this long while sprinting; then
 STAMINA_RECOVERY_SECONDS = 8  # time to recover from empty to full while not sprinting
 TIRED_ESCAPE_FACTOR = 0.3   # an exhausted loser's escape chance is multiplied by this
 OUTCOME_WEIGHTS = {         # relative chance of each kind of fight outcome
-    "ELIMINATION": 0.85,    # loser is eliminated, unless it escapes (then drops items)
-    "STANDOFF": 0.05,       # nobody hurt, both back off
-    "MUTUAL_LOSS": 0.10,    # both drop an item and back off
+    "ELIMINATION": 0.65,    # loser is eliminated, unless it escapes (then drops items and is injured)
+    "STANDOFF": 0.15,       # nobody hurt, both back off
+    "MUTUAL_LOSS": 0.20,    # both drop an item, are injured and back off
 }
 ESCAPE_DROP_FRACTION = 0.5  # share of each item type an escaping loser drops
 RETREAT_SECONDS = 3         # after a fight both survive, they back off (and can't fight) this long
@@ -292,7 +292,7 @@ ESCAPE_MAX = 0.9            # escape chance never goes above this
 # The chance to fight equals its aggression (0-1), multiplied by
 # WEAPON_FEAR_FACTOR if the other player is armed and it is not.
 WEAPON_FEAR_FACTOR = 0.5
-HUNT_GIVE_UP_SECONDS = 6    # a hunter gives up a chase after this long
+HUNT_GIVE_UP_SECONDS = 5    # a hunter gives up a chase after this long
 AVOID_COMMIT_SECONDS = 2.0  # a player backing away keeps going this long (stops jiggling at the edge of sight)
 HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
 
@@ -318,8 +318,8 @@ CHASE_MIN_SECONDS = 1.0     # a fight counts as the end of a chase after chasing
 CHASER_STRENGTH_FACTOR = 1.3  # the chaser's strength is multiplied by this in that fight
 CHASED_ESCAPE_FACTOR = 0.6  # and the chased player's escape chance by this
 # Tracking: an aggressive alliance heads roughly toward players it can't see yet
-TRACK_RADIUS = 300          # how far away such players can be
-TRACK_MIN_FIGHT_CHANCE = 0.8  # only groups at least this likely to fight go tracking
+TRACK_RADIUS = 220          # how far away such players can be
+TRACK_MIN_FIGHT_CHANCE = 0.9  # only groups at least this likely to fight go tracking
 TRACK_STEP = 120            # each estimated waypoint lies this far ahead
 TRACK_ANGLE_NOISE = 0.5     # max error (radians) in the estimated direction
 TRACK_UPDATE_SECONDS = 2    # the direction is re-estimated this often
@@ -339,3 +339,121 @@ LEADER_RING_COLOR = (255, 255, 255)
 FIGHT_FLASH_SECONDS = 0.5
 FIGHT_FLASH_COLOR = (255, 60, 60)
 FIGHT_FLASH_RADIUS = 14
+
+# --- Book features ---------------------------------------------------------
+# Day and night
+DAY_SECONDS = 70            # one full day (daytime + night) lasts this long
+NIGHT_SHARE = 0.4           # the last 40% of each day is night
+NIGHT_DARKNESS = 150        # how dark the night overlay gets (0-255)
+NIGHT_VISION_FACTOR = 0.7   # seeing distance at night
+NIGHT_REST_BONUS = 15       # at night players want to sleep when sleep drops below REST_THRESHOLD + this
+FALLEN_SHOW_SECONDS = 6     # the fallen of the day are shown this long at nightfall
+
+# Sponsor gifts
+SPONSOR_CHECK_SECONDS = 12  # every this often, one struggling tribute may get a gift
+SPONSOR_BASE_CHANCE = 0.35  # chance per check (more for tributes with kills or in big alliances)
+PARACHUTE_FALL_SECONDS = 2.5
+PARACHUTE_COLOR = (235, 235, 245)
+
+# Gamemaker events
+GAMEMAKER_EVENT_SECONDS = (50, 80)  # time between Gamemaker events (random)
+FIRE_RADIUS = 220           # a fire (or flood) covers a circle this big
+FIRE_SECONDS = 18
+FIRE_DAMAGE_CHANCE = 0.004  # chance per frame to die for a player caught inside
+FIRE_COLOR = (230, 90, 30)
+FLOOD_COLOR = (60, 110, 200)
+MUTT_COUNT = (2, 4)
+MUTT_SECONDS = 25
+MUTT_SPEED = 0.95
+MUTT_KILL_CHANCE = 0.5      # chance a mutt that reaches a tribute kills it (else it escapes, injured)
+MUTT_COLOR = (40, 20, 20)
+SHRINK_START_PLAYERS = 8    # with this many left, the arena starts shrinking toward the cornucopia
+SHRINK_MIN_RADIUS = 260
+SHRINK_SECONDS = 150        # time to shrink from full size to the minimum
+SHRINK_COLOR = (120, 30, 30)
+
+# Feast
+FEAST_PLAYERS = 9           # the feast is announced once this few tributes remain
+FEAST_ITEMS = {"food": 6, "water": 6, "weapon": 4}
+FEAST_DELAY_SECONDS = 8     # supplies appear this long after the announcement
+
+# Hiding
+HIDE_CHANCE = 0.02          # chance per frame that a hunted, cautious player in forest climbs a tree
+HIDE_SECONDS = 10
+HIDE_SPOT_DISTANCE = 12     # a hidden player can only be spotted this close
+HIDE_MAX_AGGRESSION = 0.6
+
+# Ambushes
+AMBUSH_CHANCE = 0.8         # chance an idle killer (on its own) sets an ambush by water or loot
+AMBUSH_SECONDS = 20
+AMBUSH_STRENGTH_FACTOR = 1.4  # an ambusher's strength in the fight that springs the ambush
+
+# District skills
+DISTRICT_SKILLS = {
+    1: "luxury",   # sponsors love them: more gifts
+    2: "training", # trained Careers: +2 strength
+    3: "traps",    # ambushes more often
+    4: "fishing",  # marsh refills thirst and hunger faster
+    5: "cunning",  # escapes more often
+    7: "axes",     # extra strength with an axe
+    11: "farming", # sometimes forages food in forest and meadow
+    12: "archery", # extra strength and range with a bow
+}
+SKILL_DESCRIPTIONS = {
+    "luxury": "sponsor favorite", "training": "trained fighter", "traps": "trap setter",
+    "fishing": "fisher", "cunning": "hard to catch", "axes": "axe wielder",
+    "farming": "forager", "archery": "archer",
+}
+FORAGE_CHANCE = 0.0015      # per frame, for farming tributes in forest or meadow
+
+# Weapon types
+WEAPON_TYPES = {            # type -> (strength bonus, fight range)
+    "knife": (3, 10),
+    "spear": (5, 14),
+    "axe": (6, 10),
+    "sword": (6, 10),
+    "bow": (4, 30),
+}
+SKILL_WEAPON_BONUS = 3      # extra strength for axes (District 7) and bows (District 12)
+
+# Injuries
+INJURY_SECONDS = 30         # a tribute that escapes a fight (or a mutt) is injured this long...
+INJURY_SPEED_FACTOR = 0.7   # ...moving slower...
+INJURY_STRENGTH_FACTOR = 0.7  # ...and fighting weaker
+INJURY_COLOR = (200, 30, 30)
+
+# Revenge and reputation
+REVENGE_CHANCE = 0.4        # chance a (non-coward) district partner swears revenge
+REVENGE_RADIUS = 400        # a tribute tracks the killer of its district partner within this distance
+FEARED_KILLS = 3            # with this many kills a tribute is feared
+FEARED_FACTOR = 0.6         # others' chance to fight a feared tribute (killers go for them: x1.3)
+
+# Markers
+DEATH_MARK_SECONDS = 20
+DEATH_MARK_COLOR = (230, 230, 230)
+ALLIANCE_ICON_SECONDS = 3
+HEART_COLOR = (240, 90, 130)
+
+# Inspector panel (click a tribute)
+PANEL_COLOR = (20, 24, 20)
+PANEL_BORDER = (190, 150, 60)
+SELECT_RING_COLOR = (255, 230, 120)
+
+# Event feed colors per kind of event
+EVENT_COLORS = {
+    "info": (235, 235, 235),
+    "kill": (255, 120, 110),
+    "death": (230, 170, 120),
+    "alliance": (130, 180, 255),
+    "gamemaker": (240, 200, 90),
+    "sponsor": (150, 230, 150),
+    "fight": (210, 210, 210),
+}
+
+# Alliance names (a random one is given to each alliance)
+ALLIANCE_NAMES = [
+    "the Careers", "the Pack", "the Wolves", "the Mockingjays", "the Tracker Jackers",
+    "the Hunters", "the Jabberjays", "the Lions", "the Victors-to-be", "the Nightlocks",
+    "the Firebirds", "the Ravens", "the Vipers", "the Iron Circle", "the Outliers",
+    "the Coal Diggers", "the Tide", "the Harvest", "the Sparks", "the Shadows",
+]
