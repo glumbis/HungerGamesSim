@@ -11,7 +11,7 @@ from config import (
     DEATH_MARK_SECONDS, SELECT_RING_COLOR, SKILL_DESCRIPTIONS,
     NEED_WARNING_COLORS, FIRE_COLOR, CARD_WIDTH,
     AGGRESSION_RANGES, BIG_ALLIANCE_SIZE, LEAVE_DISTANCE, TIP_SECONDS, PROFICIENCY_DESCRIPTIONS,
-    WEAPON_TYPES, TRIBUTE_PANEL_WIDTH, FAST_FORWARD_FACTOR,
+    WEAPON_TYPES, TRIBUTE_PANEL_WIDTH, FAST_FORWARD_FACTOR, NAME_MIN_ZOOM, NAME_STACK_DISTANCE, CAMP_RADIUS,
 )
 from player import Player
 from arena import Arena
@@ -166,6 +166,8 @@ class Simulation:
         events.opening = not self.opening_over  # fewer symbols around the crowded cornucopia
         if not self.opening_over:
             self.send_big_alliance_away()
+        elif self.frames_since_start % FPS == 0:
+            self.check_middle_holder()
 
         # The bloodbath ends once nobody is rushing or fleeing any more, the
         # rush has had its full time, and no fight has been going on for a moment
@@ -231,6 +233,25 @@ class Simulation:
         leader.tip_timer = TIP_SECONDS * FPS
         events.log(narration.pick(narration.ALLIANCE_LEAVES, alliance=leaving.name,
                                   leader=leader.name), "alliance")
+
+    def check_middle_holder(self):
+        """Once a second after the bloodbath: if one alliance is the only group
+        at the cornucopia (no other tributes near it), it has won the middle.
+        It stays there, living off the supplies piled around the horn."""
+        center_x, center_y = self.arena.center_x, self.arena.center_y
+        near = [player for player in self.players
+                if distance(player.x, player.y, center_x, center_y) <= CAMP_RADIUS]
+        groups = {player.alliance for player in near}  # None stands for tributes on their own
+        if len(groups) != 1 or None in groups:
+            return
+        holder = groups.pop()
+        if holder.holds_middle or holder.roams or len(self.players) <= SHOWDOWN_PLAYERS:
+            return
+        if any(alliance.holds_middle for alliance in {p.alliance for p in self.players if p.alliance}):
+            return  # another alliance already holds it (and is just away for a moment)
+        holder.holds_middle = True
+        events.log(narration.pick(narration.HOLD_MIDDLE, alliance=holder.name, leader=holder.leader.name),
+                   "alliance")
 
     def record_death(self, player, remaining):
         """Standings, a cross where it fell, a name for the night sky and the event text."""
@@ -509,7 +530,8 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None, fast=F
             pygame.draw.line(screen, CHASE_LINE_COLOR,
                              on_screen(player.x, player.y), on_screen(player.prey.x, player.prey.y))
     for player in sim.players:
-        player.draw(screen, camera, name_font, debug)
+        player.draw(screen, camera, name_font, debug, draw_name=False)
+    draw_name_labels(screen, camera, sim.players, name_font)
     if selected is not None and selected.alive:
         pygame.draw.circle(screen, SELECT_RING_COLOR, on_screen(selected.x, selected.y), camera.size(9, 7), 1)
 
@@ -529,6 +551,47 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None, fast=F
         draw_cards(screen, font, camera, selected)
     events.draw_toast(screen, ui.font(15, bold=True))
     pygame.display.flip()
+
+
+def draw_name_labels(screen, camera, players, name_font):
+    """Names above the tributes. When members of an alliance stand close
+    together, their names are stacked above the group instead of being drawn
+    on top of each other. Everyone else keeps their name above their own dot."""
+    if camera.zoom < NAME_MIN_ZOOM:
+        return
+    visible = screen.get_rect().inflate(40, 40)
+    labeled = [(player, player.label_anchor(camera, screen)) for player in players]
+    labeled = [(player, anchor) for player, anchor in labeled if visible.collidepoint(anchor)]
+
+    # Put tributes whose labels would be close into the same group. `leader[i]`
+    # points toward the group tribute i belongs to; following the pointers
+    # until one points to itself finds the group. Joining two groups is just
+    # pointing one at the other, so chains of close tributes end up together.
+    leader = list(range(len(labeled)))
+
+    def group_of(i):
+        while leader[i] != i:
+            i = leader[i]
+        return i
+
+    for i, (first_player, first) in enumerate(labeled):
+        for j in range(i + 1, len(labeled)):
+            second_player, second = labeled[j]
+            if first_player.alliance is None or first_player.alliance is not second_player.alliance:
+                continue  # only allies' names are stacked
+            if abs(first[0] - second[0]) < NAME_STACK_DISTANCE and abs(first[1] - second[1]) < NAME_STACK_DISTANCE:
+                leader[group_of(i)] = group_of(j)
+    groups = {}
+    for i, item in enumerate(labeled):
+        groups.setdefault(group_of(i), []).append(item)  # setdefault: start an empty list the first time
+
+    for group in groups.values():
+        x = sum(anchor[0] for _, anchor in group) / len(group)  # above the middle of the group
+        bottom = min(anchor[1] for _, anchor in group)           # above its highest tribute
+        group.sort(key=lambda item: item[0].name)
+        for i, (player, _) in enumerate(group):
+            label = player.label(name_font)
+            screen.blit(label, label.get_rect(midbottom=(x, bottom - i * (label.get_height() + 1))))
 
 
 def is_quiet(sim, camera):

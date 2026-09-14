@@ -295,7 +295,7 @@ class Player:
                            camera.world_to_screen(self.x, self.y, screen),
                            camera.size(VISION_RADIUS), 1)
 
-    def draw(self, screen, camera, name_font, debug=False):
+    def draw(self, screen, camera, name_font, debug=False, draw_name=True):
         center = camera.world_to_screen(self.x, self.y, screen)
         # Skip players outside the window (the extra 40 px keeps rings visible at the edge)
         if not screen.get_rect().inflate(40, 40).collidepoint(center):
@@ -332,17 +332,27 @@ class Player:
         self.draw_warnings(screen, camera, center, radius)
         self.draw_status_icons(screen, camera, center, radius)
 
-        # The name, small, above the warning dots (hidden when zoomed far out)
-        if camera.zoom >= NAME_MIN_ZOOM:
-            if self.name_label is None:
-                # The name on a small see-through dark label, made once and reused
-                text = name_font.render(f"{self.name} ({self.district})", True, NAME_TEXT_COLOR)
-                self.name_label = pygame.Surface((text.get_width() + 8, text.get_height() + 2), pygame.SRCALPHA)
-                pygame.draw.rect(self.name_label, (0, 0, 0, 130), self.name_label.get_rect(), border_radius=4)
-                self.name_label.blit(text, (4, 1))
-            above_dots = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2) \
-                - camera.size(WARNING_DOT_RADIUS, 1) - 2
-            screen.blit(self.name_label, self.name_label.get_rect(midbottom=(center[0], above_dots)))
+        # The name, small, above the warning dots (hidden when zoomed far out).
+        # main.py usually draws the names itself, so it can stack those of a group.
+        if draw_name and camera.zoom >= NAME_MIN_ZOOM:
+            label = self.label(name_font)
+            screen.blit(label, label.get_rect(midbottom=self.label_anchor(camera, screen)))
+
+    def label(self, name_font):
+        """The name and district on a small see-through dark label, made once and reused."""
+        if self.name_label is None:
+            text = name_font.render(f"{self.name} ({self.district})", True, NAME_TEXT_COLOR)
+            self.name_label = pygame.Surface((text.get_width() + 8, text.get_height() + 2), pygame.SRCALPHA)
+            pygame.draw.rect(self.name_label, (0, 0, 0, 130), self.name_label.get_rect(), border_radius=4)
+            self.name_label.blit(text, (4, 1))
+        return self.name_label
+
+    def label_anchor(self, camera, screen):
+        """The screen point just above the warning dots, where the name label's bottom goes."""
+        center = camera.world_to_screen(self.x, self.y, screen)
+        radius = camera.size(PLAYER_RADIUS, minimum=2)
+        return (center[0], center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2)
+                - camera.size(WARNING_DOT_RADIUS, 1) - 2)
 
     def draw_status_icons(self, screen, camera, center, radius):
         """Small symbols under the dot: a red blade if the player carries a

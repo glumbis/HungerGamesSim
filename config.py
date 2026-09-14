@@ -106,6 +106,9 @@ NEED_SECONDS_TO_EMPTY = {   # roughly how long each need takes to drop from full
 NEED_RATE_VARIATION = 0.25  # each tribute's rates are up to 25% faster or slower
 NEED_WARNING_THRESHOLD = 30 # a warning dot appears above the tribute below this
 SEEK_THRESHOLD = 40         # hunger/thirst below this, with nothing carried: go and find some
+DESPERATE_SUPPLY_THRESHOLD = 25  # below this, with no supplies known, a tribute risks going to the cornucopia...
+MIDDLE_ARRIVE_RADIUS = 120  # ...until this close to it (then it searches as usual)
+DESPERATE_KNOWN_RANGE = 300 # a desperate tribute only trusts remembered supplies this close
 
 REST_THRESHOLD = 50         # sleep below this: find a spot and rest
 REST_UNTIL = 90             # a resting tribute gets up once sleep reaches this
@@ -120,13 +123,13 @@ FOREST_SHELTER_RADIUS = 300 # tired tributes look for forest to sleep in this fa
 # Loot
 # =============================================================================
 LOOT_COUNTS = {             # items spawned at the start (nothing respawns)
-    "food": 14,
-    "water": 16,
+    "food": 30,
+    "water": 34,
     "weapon": 12,
 }
 LOOT_CENTER_FRACTION = {    # share of each item type piled at the cornucopia
-    "food": 0.3,
-    "water": 0.3,
+    "food": 0.67,
+    "water": 0.65,
     "weapon": 0.8,          # most weapons are at the cornucopia: worth fighting for
 }
 LOOT_CENTER_SPREAD = 55     # typical distance of cornucopia loot from the horn's mouth
@@ -171,7 +174,7 @@ LEAVE_DISTANCE = 650        # ...for a point this far from the cornucopia
 # =============================================================================
 # Moving around
 # =============================================================================
-VISION_RADIUS = 90          # how far a tribute sees
+VISION_RADIUS = 140         # how far a tribute sees
 STATE_SPEED_MULTIPLIERS = { # urgent states move faster (states not listed: 1.0)
     "HUNTING": 1.65,        # a little faster than AVOIDING, so chasers gain on their prey
     "AVOIDING": 1.5,
@@ -273,7 +276,7 @@ ALLIANCE_MERGE_CHANCE = 0.15  # chance two alliances meeting merge (if the resul
 ALLIANCE_MAX_SIZE = 6
 BETRAYAL_CHANCE_PER_MINUTE = 0.08  # for a member with aggression 1 (scaled by aggression)
 ALLIANCE_AGGRESSION_BONUS = 0.2   # added to a group's chance to fight for each extra member
-ALLIANCE_SENSE_RADIUS = 115 # members notice non-allies this far away (loners: VISION_RADIUS)
+ALLIANCE_SENSE_RADIUS = 175 # members notice non-allies this far away (loners: VISION_RADIUS)
 ALLY_STRENGTH_SHARE = 0.8   # share of a nearby ally's strength added in a fight...
 ALLY_SUPPORT_RANGE = 110    # ...for allies this close
 ALLIANCE_ASSIST_RADIUS = 250  # members this close to an ally's fight (or the leader's hunt) join in
@@ -285,7 +288,8 @@ FOLLOW_LEASH = 45           # ...collect loot at most this far from it...
 FOLLOW_CATCHUP_MULTIPLIER = 1.3  # ...and hurry (this much faster) when further behind than that
 CAREER_DISTRICTS = (1, 2, 4)  # like the books: these districts' tributes start the Games as one pack
 CAMP_ALLIANCE_SIZE = 4      # alliances at least this big stay around the cornucopia...
-CAMP_RADIUS = 350           # ...exploring only within this distance of it
+CAMP_RADIUS = 350           # ...exploring only within this distance of it (as does an alliance that
+                            # is the only group this close after the bloodbath: it has won the middle)
 ALLIANCE_NAMES = [          # a random one is given to each alliance
     "the Careers", "the Pack", "the Wolves", "the Mockingjays", "the Tracker Jackers",
     "the Hunters", "the Jabberjays", "the Lions", "the Victors-to-be", "the Nightlocks",
@@ -379,6 +383,7 @@ ALLIANCE_COLORS = [                 # each new alliance takes the next color
     (240, 120, 240), (110, 230, 230), (255, 170, 90), (190, 150, 255),
 ]
 NAME_MIN_ZOOM = 0.7         # names above heads are hidden when zoomed out further than this
+NAME_STACK_DISTANCE = 60    # names of tributes closer than this on screen are stacked above the group
 NAME_TEXT_COLOR = (235, 235, 235)
 NEED_WARNING_COLORS = {     # warning dots above a tribute, one per need
     "hunger": (230, 140, 40),

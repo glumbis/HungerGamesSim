@@ -28,7 +28,7 @@ from config import (
     HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE, HIDE_MAX_AGGRESSION,
     AMBUSH_CHANCE, AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
     STEALTH_VISIBILITY, TRACKING_FACTOR, CHILL_CHANCE, CHILL_SECONDS, CHILL_START_PER_SECOND,
-    IDLE_SPREAD_FACTOR,
+    IDLE_SPREAD_FACTOR, DESPERATE_SUPPLY_THRESHOLD, MIDDLE_ARRIVE_RADIUS, DESPERATE_KNOWN_RANGE,
 )
 from utils import distance, angle_to
 
@@ -228,9 +228,13 @@ def explore(player):
             pause *= EXPLORER_PAUSE_FACTOR  # explorers don't linger
         player.pause_timer = int(pause * FPS)
         return
+    if player.alliance is not None and player.alliance.holds_middle and player.explore_point is not None and \
+            distance(*player.explore_point, WORLD_WIDTH / 2, WORLD_HEIGHT / 2) > CAMP_RADIUS:
+        player.explore_point = None  # has won the middle: forget earlier plans to go elsewhere
     if player.explore_point is None:
-        if player.alliance is not None and len(player.alliance.members) >= CAMP_ALLIANCE_SIZE \
-                and not player.alliance.roams:
+        alliance = player.alliance
+        if alliance is not None and (alliance.holds_middle or
+                                     (len(alliance.members) >= CAMP_ALLIANCE_SIZE and not alliance.roams)):
             player.explore_point = camp_point()
         else:
             player.explore_point = choose_explore_point(player)
@@ -255,6 +259,8 @@ def shelter_spot(player, arena):
        center: SHELTER_WALL_MARGIN from that wall, but never more than
        SHELTER_MAX_DISTANCE away, so it doesn't cross half the arena to sleep.
        Each option below is (distance to that wall, spot)."""
+    if player.alliance is not None and player.alliance.holds_middle:
+        return player.x, player.y  # the group guarding the cornucopia sleeps right there
     search = FOREST_SHELTER_RADIUS * (2 if player.temperament == "coward" else 1)
     forest = arena.find_terrain(player.x, player.y, "forest", search)
     if forest is not None:
@@ -1094,9 +1100,16 @@ def decide(player, arena, players):
 
         set_state(player, SEARCHING)
         remembered = [item for item in known_loot if item.kind == need]
-        if remembered:
-            # Head for the closest remembered item (it may already be gone)
-            item = nearest(player, remembered)
+        item = nearest(player, remembered)  # the closest remembered item (it may already be gone), or None
+        lowest = min(member.needs[LOOT_RESTORES[need]] for member in members)
+        to_middle = distance(player.x, player.y, arena.center_x, arena.center_y)
+        if lowest < DESPERATE_SUPPLY_THRESHOLD and to_middle > MIDDLE_ARRIVE_RADIUS and \
+                (item is None or distance(player.x, player.y, item.x, item.y) > min(to_middle, DESPERATE_KNOWN_RANGE)):
+            # Desperate, and nothing remembered close by (far memories may well be
+            # gone): the cornucopia is where the supplies were piled, so take the
+            # risk and head for the middle
+            player.target = (arena.center_x, arena.center_y)
+        elif item is not None:
             player.target = (item.x, item.y)
         else:
             # Nothing known: search parts of the arena not visited yet

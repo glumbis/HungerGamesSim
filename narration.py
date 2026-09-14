@@ -308,6 +308,13 @@ TRAINING_SCORES = [
     "The Gamemakers have scored the tributes. {best} leads with {best_score}; {worst} trails with {worst_score}.",
 ]
 
+HOLD_MIDDLE = [
+    "With no one left to challenge them, {alliance} claim the cornucopia and its supplies.",
+    "The horn belongs to {alliance} now. {leader} sets up camp among the supplies.",
+    "Having won the middle, {leader} keeps {alliance} at the cornucopia, well fed and watchful.",
+    "The cornucopia is theirs: {alliance} guard the piled supplies under {leader}.",
+]
+
 ALLIANCE_LEAVES = [
     "Seeing another pack claim the horn, {leader} leads {alliance} away from the cornucopia.",
     "Not wanting a war over the horn, {leader} takes {alliance} out into the arena.",

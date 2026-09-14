@@ -129,7 +129,16 @@ bloodthirsty alliance that rushes the horn together.
   sight and needs; members follow closely (spreading out 3.5× further while
   the group sits, sleeps or drinks: `IDLE_SPREAD_FACTOR`), join the leader's
   hunts and every ally's fights, and share food and water. Big alliances (4+) camp near the
-  cornucopia unless they left it in the opening.
+  cornucopia unless they left it in the opening. After the bloodbath, an
+  alliance that is the only group within 350 px of the cornucopia "wins the
+  middle" (`Alliance.holds_middle`, `Simulation.check_middle_holder`): it
+  stays there, sleeping on the spot, living off the supplies piled there.
+- Tributes very low on food or water (below 25) who remember no supplies
+  within 300 px head for the cornucopia as a last resort
+  (`DESPERATE_SUPPLY_THRESHOLD`, `DESPERATE_KNOWN_RANGE`).
+- Names of alliance members standing close together are stacked in one
+  column above the group; other tributes keep their name above their own dot
+  (`main.draw_name_labels`, `NAME_STACK_DISTANCE`).
 - Rare betrayals; an alliance breaks up when too few members are left, when
   only allies remain, or at the finale. Each alliance gets a name ("the
   Careers" for founders from Districts 1, 2 and 4).

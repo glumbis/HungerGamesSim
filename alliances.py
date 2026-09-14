@@ -76,6 +76,7 @@ class Alliance:
         self.style = choose_style(first, second)
         self.name = choose_name(first, second)
         self.roams = False  # True: roams the arena instead of camping at the cornucopia
+        self.holds_middle = False  # True once it has won the cornucopia: it stays there (see main.py)
         self.add(first)
         self.add(second)
         self.choose_new_leader()
