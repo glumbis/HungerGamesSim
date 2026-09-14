@@ -31,7 +31,9 @@ class Player:
     def __init__(self, player_id, x, y, name):
         self.id = player_id
         self.name = name
-        self.name_label = None      # the name rendered as an image, made the first time it is drawn
+        self.district = player_id // 2 + 1  # players 0 and 1 are District 1, 2 and 3 are District 2, ...
+        self.loner = False          # "no alliance" trait: never allies with anyone (set in main.py)
+        self.name_label = None      # the name and district rendered as an image, made the first time it is drawn
         self.x = x
         self.y = y
         self.speed = random.uniform(PLAYER_MIN_SPEED, PLAYER_MAX_SPEED)
@@ -257,7 +259,7 @@ class Player:
         # The name, small, above the warning dots (hidden when zoomed far out)
         if camera.zoom >= NAME_MIN_ZOOM:
             if self.name_label is None:
-                self.name_label = name_font.render(self.name, True, NAME_TEXT_COLOR)
+                self.name_label = name_font.render(f"{self.name} ({self.district})", True, NAME_TEXT_COLOR)
             above_dots = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2) \
                 - camera.size(WARNING_DOT_RADIUS, 1) - 2
             screen.blit(self.name_label, self.name_label.get_rect(midbottom=(center[0], above_dots)))

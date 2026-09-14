@@ -6,7 +6,8 @@ import random
 import events
 from config import (
     FPS, LOOT_RESTORES, LOOT_USE_THRESHOLD,
-    ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLY_SHARE_RANGE, FOLLOW_SPREAD,
+    ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLIANCE_MERGE_CHANCE, SAME_DISTRICT_ALLIANCE_CHANCE,
+    ALLY_SHARE_RANGE, FOLLOW_SPREAD,
     BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS, ALLIANCE_WILLINGNESS, SHOWDOWN_PLAYERS,
 )
 from utils import distance
@@ -93,8 +94,10 @@ def try_to_ally(player, other, chance=None):
     not an ally. Two loners may form a new alliance, or a loner may join the
     other's alliance. `chance` replaces the usual chance (used in the
     bloodbath). Returns True if they are now allies."""
+    if player.loner or other.loner:
+        return False  # "no alliance" trait: trusts nobody
     if player.alliance is not None and other.alliance is not None:
-        return False  # two alliances never merge
+        return try_to_merge(player, other)
     if other in player.former_allies:
         return False  # no second chances
     if other in player.alliance_rolls:
@@ -113,6 +116,15 @@ def try_to_ally(player, other, chance=None):
     other_side = other.alliance.leader if other.alliance else other
     if chance is None:
         chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
+    # Tributes from the same district very likely stick together: the two who
+    # meet are district partners, or the newcomer's partner is in the group
+    if group is None:
+        same_district = player.district == other.district
+    else:
+        newcomer = other if group is player.alliance else player
+        same_district = any(member.district == newcomer.district for member in group.members)
+    if same_district:
+        chance = SAME_DISTRICT_ALLIANCE_CHANCE
     if random.random() >= chance:
         return False
 
@@ -125,6 +137,33 @@ def try_to_ally(player, other, chance=None):
         group.add(newcomer)
         events.log(f"{newcomer.name} joined the alliance led by {group.leader.name} "
                    f"({group.names()}).")
+    return True
+
+
+def try_to_merge(player, other):
+    """Two alliances meet: a small chance (ALLIANCE_MERGE_CHANCE) they join
+    into one, if the result is not too big. The bigger alliance takes in the
+    smaller one; the strongest member of the new group leads. Each pair of
+    players still gets only one roll per game. Returns True if merged."""
+    group, other_group = player.alliance, other.alliance
+    if group is other_group or other in player.alliance_rolls:
+        return False
+    if len(group.members) + len(other_group.members) > ALLIANCE_MAX_SIZE:
+        return False
+    if any(member in player.former_allies for member in other_group.members):
+        return False
+    player.alliance_rolls.add(other)
+    other.alliance_rolls.add(player)
+    if random.random() >= ALLIANCE_MERGE_CHANCE:
+        return False
+
+    if len(other_group.members) > len(group.members):
+        group, other_group = other_group, group  # `group` is now the bigger one
+    for member in list(other_group.members):  # copy: the list is emptied as we go
+        other_group.members.remove(member)
+        group.add(member)
+    group.choose_new_leader()
+    events.log(f"Two alliances merged: {group.names()} (leader: {group.leader.name}).")
     return True
 
 

@@ -12,6 +12,7 @@ from config import (
     ALLIANCE_RETREAT_SECONDS, SHOWDOWN_PLAYERS,
     FIGHT_DURATION_MIN, FIGHT_DURATION_MAX, FIGHT_ALERT_RADIUS, ALERT_SECONDS,
     TIRED_ESCAPE_FACTOR, BLOODBATH_OUTCOME_WEIGHTS, BLOODBATH_ESCAPE_FACTOR,
+    CHASE_MIN_SECONDS, CHASER_STRENGTH_FACTOR, CHASED_ESCAPE_FACTOR,
 )
 from ai import stop_hunting, set_state, RESTING, FIGHTING
 from utils import distance
@@ -30,9 +31,19 @@ class Fight:
         self.defender = defender
         self.to_the_death = to_the_death  # True in the finale
         self.bloodbath = bloodbath        # True if it started during the opening bloodbath
+        self.chase = was_chasing(attacker)  # True if the attacker ran its prey down
         self.x = (attacker.x + defender.x) / 2  # where the fight is happening
         self.y = (attacker.y + defender.y) / 2
         self.frames_left = int(random.uniform(FIGHT_DURATION_MIN, FIGHT_DURATION_MAX) * FPS)
+
+
+def was_chasing(attacker):
+    """True if the attacker (or, for an alliance member, its leader) has been
+    chasing its prey for at least CHASE_MIN_SECONDS."""
+    timer = attacker.hunt_timer
+    if attacker.alliance is not None and attacker.alliance.leader.prey is attacker.prey:
+        timer = max(timer, attacker.alliance.leader.hunt_timer)
+    return timer >= CHASE_MIN_SECONDS * FPS
 
 
 def effective_strength(player):
@@ -70,7 +81,8 @@ def handle_fights(players, arena):
             end_fight(fight, arena)  # someone died of hunger, thirst or sleep mid-fight
         elif fight.frames_left <= 0:
             end_fight(fight, arena)
-            resolve_fight(fight.attacker, fight.defender, arena, fight.to_the_death, fight.bloodbath)
+            resolve_fight(fight.attacker, fight.defender, arena,
+                          fight.to_the_death, fight.bloodbath, fight.chase)
 
 
 def start_fight(attacker, defender, arena, players, to_the_death):
@@ -98,11 +110,14 @@ def end_fight(fight, arena):
     fight.defender.fight = None
 
 
-def resolve_fight(attacker, defender, arena, to_the_death, bloodbath):
+def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=False):
     """Decide how a finished fight turned out. Bloodbath fights (started during
-    the opening) are deadlier: other outcome weights and fewer escapes."""
+    the opening) are deadlier: other outcome weights and fewer escapes. At the
+    end of a chase the chaser is stronger and the chased player escapes less."""
     strength_a = effective_strength(attacker)
     strength_d = effective_strength(defender)
+    if chase:
+        strength_a *= CHASER_STRENGTH_FACTOR
     arena.add_flash((attacker.x + defender.x) / 2, (attacker.y + defender.y) / 2)
 
     # Who comes out on top: the chance is each side's share of the total strength
@@ -130,6 +145,8 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath):
         escape_chance *= TIRED_ESCAPE_FACTOR + (1 - TIRED_ESCAPE_FACTOR) * loser.stamina
         if bloodbath:
             escape_chance *= BLOODBATH_ESCAPE_FACTOR  # hard to get away in the chaos
+        if chase and loser is defender:
+            escape_chance *= CHASED_ESCAPE_FACTOR  # run down: hard to get away
         if to_the_death:
             escape_chance = 0  # ...and in the finale nobody escapes
         if random.random() < escape_chance:

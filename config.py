@@ -4,8 +4,8 @@ SCREEN_HEIGHT = 700
 FPS = 60
 
 # World: the arena is much larger than the window; a camera shows part of it
-WORLD_WIDTH = 2800
-WORLD_HEIGHT = 2100
+WORLD_WIDTH = 2200
+WORLD_HEIGHT = 1650
 
 # Colors (R, G, B)
 BACKGROUND_COLOR = (30, 30, 30)
@@ -14,8 +14,8 @@ PLAYER_COLOR = (220, 220, 220)
 # Player settings
 NUM_PLAYERS = 24
 PLAYER_RADIUS = 3           # size of the dot drawn on screen
-PLAYER_MIN_SPEED = 0.45     # pixels moved per frame, slowest player
-PLAYER_MAX_SPEED = 1.15     # pixels moved per frame, fastest player
+PLAYER_MIN_SPEED = 0.3      # pixels moved per frame, slowest player
+PLAYER_MAX_SPEED = 0.75     # pixels moved per frame, fastest player
 WANDER_TURN_RATE = 0.15     # max radians the heading can drift per frame
 
 # Starting formation
@@ -27,9 +27,9 @@ NEED_WARNING_THRESHOLD = 30 # warning dot appears below this value
 # Roughly how many seconds each need takes to drop from full to 0.
 # These are short on purpose so deaths are visible while testing.
 NEED_SECONDS_TO_EMPTY = {
-    "hunger": 140,
-    "thirst": 115,
-    "sleep": 75,            # sleep runs out fastest, so players must rest regularly
+    "hunger": 160,
+    "thirst": 130,
+    "sleep": 85,           # sleep runs out fastest, so players must rest regularly
 }
 NEED_RATE_VARIATION = 0.25  # each player's rate is up to 25% faster/slower
 
@@ -74,14 +74,16 @@ CARRY_LIMITS = {            # the most of each item a player will carry
 }
 
 # AI
-VISION_RADIUS = 65          # how far (pixels) a player can see
+VISION_RADIUS = 90        # how far (pixels) a player can see
 STEER_TURN_RATE = 0.2       # max radians per frame when turning toward a target
 STEER_SNAP_DISTANCE = 30    # closer than this, face the target directly (prevents circling it)
 ARRIVE_DISTANCE = 10        # how close counts as "arrived" at a search point
 RUSH_DURATION = 11          # seconds aggressive players rush the center at the start (the bloodbath lasts at least this long)
-RUSH_BIAS = 0.15            # added to a balanced player's chance (its aggression) to rush the cornucopia
-FLEE_DURATION = 5           # max seconds cautious players run outward at the start
-FLEE_DISTANCE = 700         # how far from the center fleeing players aim for
+BLOODBATH_END_QUIET_SECONDS = 0.5  # the bloodbath only ends once no fight has been going on for this long
+CENTER_PULL = 0.15          # exploring/searching destinations are moved this share of the way toward the middle (not for edge dwellers)
+RUSH_BIAS = 0.25          # added to a balanced player's chance (its aggression) to rush the cornucopia
+FLEE_DURATION = 8           # max seconds cautious players run outward at the start (nobody fights or allies with them meanwhile)
+FLEE_DISTANCE = 550        # how far from the center fleeing players aim for
 FLEE_EDGE_MARGIN = 60       # flee points are kept at least this far from the walls
 SEEK_THRESHOLD = 40         # hunger/thirst below this, with nothing carried -> go find some
 REST_THRESHOLD = 50         # sleep below this -> rest
@@ -98,10 +100,10 @@ SHELTER_MAX_DISTANCE = 300  # ...but walk at most this far toward it before lyin
 # Speed multiplier per state (any state not listed moves at 1.0). Urgent
 # states are faster, so chases and escapes stand out from calm movement.
 STATE_SPEED_MULTIPLIERS = {
-    "HUNTING": 1.5,
+    "HUNTING": 1.65,        # a little faster than AVOIDING, so chasers gain on their prey
     "AVOIDING": 1.5,
-    "RUSH_LOOT": 1.3,
-    "FLEE_OUTWARD": 1.3,
+    "RUSH_LOOT": 1.1,       # kept low so the start isn't a frantic blur
+    "FLEE_OUTWARD": 1.1,
     "SEEKING": 1.2,
     "TRACKING": 1.2,
     "INVESTIGATING": 1.2,
@@ -132,8 +134,8 @@ ROAMING_WEIGHTS = {         # share of players with each roaming style
     "explorer": 0.25,       # crosses the arena to far unvisited areas, short pauses
 }
 EXPLORER_PAUSE_FACTOR = 0.4 # explorers pause this fraction of the normal time
-EXPLORE_MIN_TRIP = 600      # exploring players pick destinations at least this far away...
-EXPLORER_MIN_TRIP = 1000    # ...and explorers even further, so they head one way for a long time
+EXPLORE_MIN_TRIP = 500      # exploring players pick destinations at least this far away...
+EXPLORER_MIN_TRIP = 850   # ...and explorers even further, so they head one way for a long time
 EDGE_BAND = (25, 70)        # edge dwellers explore points this far (min, max) from the nearest wall
 ALLIANCE_WILLINGNESS = {    # fixed willingness to ally (0-1); balanced players use 1 - aggression
     "killer": 0.3,
@@ -159,7 +161,7 @@ BLOODBATH_OUTCOME_WEIGHTS = {
     "MUTUAL_LOSS": 0.0,
 }
 BLOODBATH_ESCAPE_FACTOR = 0.15  # a loser's usual escape chance is multiplied by this
-BLOODBATH_ALLIANCE_CHANCE = 0.2 # chance two lone rushers next to each other form a new alliance...
+BLOODBATH_ALLIANCE_CHANCE = 0.17# chance two lone rushers next to each other form a new alliance...
 BLOODBATH_JOIN_CHANCE = 0.7     # ...but a rusher joins an existing alliance much more readily (fewer, bigger groups)
 CORNUCOPIA_SIZE = 70        # size of the golden horn (world pixels)
 CORNUCOPIA_COLOR = (205, 165, 70)
@@ -211,7 +213,7 @@ TERRAIN_SPEED = {           # movement speed factor
 SAND_THIRST_FACTOR = 1.5    # thirst drops this much faster on sand
 MARSH_REFILL_SECONDS = 40   # standing in marsh refills thirst from 0 to full in this time
 MARSH_DRINK_UNTIL = 90      # a player drinking in marsh stays until thirst reaches this
-MARSH_SEARCH_RADIUS = 700   # thirsty players look for marsh this far away
+MARSH_SEARCH_RADIUS = 600  # thirsty players look for marsh this far away
 FOREST_SHELTER_RADIUS = 300 # tired players look for forest to sleep in this far away (cowards: twice as far)
 TERRAIN_CLEAR_RADIUS = 260  # a meadow clearing surrounds the cornucopia
 OUTSIDE_COLOR = (12, 12, 12)   # beyond the arena border
@@ -289,8 +291,9 @@ AVOID_COMMIT_SECONDS = 2.0  # a player backing away keeps going this long (stops
 HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
 
 # Alliances
-ALLIANCE_CHANCE = 0.35      # chance to ally = this x (1 - aggression) of each side
-ALLIANCE_MAX_SIZE = 5       # most members an alliance can have
+ALLIANCE_CHANCE = 0.5      # chance to ally = this x (1 - aggression) of each side
+LONERS_PER_GAME = (2, 6)    # this many players (random, inclusive) never join any alliance
+ALLIANCE_MAX_SIZE = 6      # most members an alliance can have
 ALLY_STRENGTH_SHARE = 0.8   # share of a nearby ally's strength added in a fight
 ALLY_SUPPORT_RANGE = 80     # allies this close help in a fight
 ALLY_SHARE_RANGE = 40       # allies this close hand over food/water
@@ -298,8 +301,16 @@ FOLLOW_SPREAD = 16          # members stay within about this distance of their l
 FOLLOW_LEASH = 45           # members collect loot at most this far from their leader
 BETRAYAL_CHANCE_PER_MINUTE = 0.3  # for a member with aggression 1 (scaled by aggression)
 ALLIANCE_AGGRESSION_BONUS = 0.2   # added to a group's chance to fight for each extra member
-ALLIANCE_SENSE_RADIUS = 100 # alliance members notice non-allies this far away (loners: VISION_RADIUS)
+ALLIANCE_SENSE_RADIUS = 115# alliance members notice non-allies this far away (loners: VISION_RADIUS)
 ALLIANCE_RETREAT_SECONDS = 1  # alliances back off only this long after a fight (loners: RETREAT_SECONDS)
+SAME_DISTRICT_ALLIANCE_CHANCE = 0.9  # chance to ally with a player from your own district (replaces the usual chance)
+ALLIANCE_MERGE_CHANCE = 0.15 # chance two alliances meeting face to face merge (if the result fits ALLIANCE_MAX_SIZE)
+CAMP_ALLIANCE_SIZE = 4      # alliances at least this big stay around the cornucopia...
+CAMP_RADIUS = 350           # ...exploring only within this distance of it
+# Chases: a hunter that has chased its prey for a while has the upper hand
+CHASE_MIN_SECONDS = 1.0     # a fight counts as the end of a chase after chasing this long
+CHASER_STRENGTH_FACTOR = 1.3  # the chaser's strength is multiplied by this in that fight
+CHASED_ESCAPE_FACTOR = 0.6  # and the chased player's escape chance by this
 # Tracking: an aggressive alliance heads roughly toward players it can't see yet
 TRACK_RADIUS = 300          # how far away such players can be
 TRACK_MIN_FIGHT_CHANCE = 0.8  # only groups at least this likely to fight go tracking

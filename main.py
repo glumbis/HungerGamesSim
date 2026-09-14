@@ -1,7 +1,9 @@
 import math
+import random
 import pygame
 from config import (
-    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, WORLD_WIDTH, WORLD_HEIGHT,
+    SCREEN_WIDTH, SCREEN_HEIGHT, FPS, WORLD_WIDTH, WORLD_HEIGHT, LONERS_PER_GAME,
+    BLOODBATH_END_QUIET_SECONDS,
     NUM_PLAYERS, PLAYER_COLOR, LEGEND_TEXT_COLOR, CHASE_LINE_COLOR,
     SHOWDOWN_PLAYERS, SPEED_LEVELS, HUD_TEXT_COLOR, RUSH_DURATION,
     COUNTDOWN_SECONDS, COUNTDOWN_TEXT_COLOR, CORNUCOPIA_COLOR, CAMERA_OPENING_ZOOM,
@@ -20,7 +22,12 @@ import events
 
 def create_starting_players(arena, names):
     """One player on each launch plate around the cornucopia."""
-    return [Player(player_id=i, x=x, y=y, name=names[i]) for i, (x, y) in enumerate(arena.plates)]
+    players = [Player(player_id=i, x=x, y=y, name=names[i]) for i, (x, y) in enumerate(arena.plates)]
+    # A few random players get the "no alliance" trait. randint includes both
+    # ends; random.sample picks that many different players.
+    for player in random.sample(players, random.randint(*LONERS_PER_GAME)):
+        player.loner = True
+    return players
 
 
 class Simulation:
@@ -39,6 +46,7 @@ class Simulation:
         self.frames_since_start = 0
         self.opening_over = False   # True once the rush and flight from the cornucopia are done
         self.bloodbath_deaths = 0
+        self.quiet_frames = 0       # frames in a row with no fight going on
         self.finale_announced = False
         self.game_over = False
 
@@ -103,10 +111,12 @@ class Simulation:
         # Remove dead members, replace dead leaders, handle betrayals
         alliances.update_alliances(self.players)
 
-        # The bloodbath ends once nobody is rushing or fleeing any more
-        # (and the rush has had its full time)
+        # The bloodbath ends once nobody is rushing or fleeing any more, the
+        # rush has had its full time, and no fight has been going on for a moment
+        self.quiet_frames = 0 if self.arena.fights else self.quiet_frames + 1
         opening_states = (ai.RUSH_LOOT, ai.FLEE_OUTWARD)
         if not self.opening_over and self.frames_since_start >= RUSH_DURATION * FPS and \
+                self.quiet_frames >= BLOODBATH_END_QUIET_SECONDS * FPS and \
                 not any(player.state in opening_states for player in self.players):
             self.opening_over = True
             self.bloodbath_deaths = NUM_PLAYERS - len(self.players)

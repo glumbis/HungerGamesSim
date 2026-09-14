@@ -20,7 +20,7 @@ from config import (
     TERRAIN_VISIBILITY, MARSH_SEARCH_RADIUS, MARSH_DRINK_UNTIL, FOREST_SHELTER_RADIUS,
     EXPLORE_MIN_TRIP, EXPLORER_MIN_TRIP, TIP_SECONDS, INVESTIGATE_MIN_FIGHT_CHANCE,
     SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
-    BLOODBATH_JOIN_CHANCE,
+    BLOODBATH_JOIN_CHANCE, CAMP_ALLIANCE_SIZE, CAMP_RADIUS, CENTER_PULL,
 )
 from utils import distance, angle_to
 
@@ -171,6 +171,9 @@ def choose_explore_point(player, roaming=None, min_trip=EXPLORE_MIN_TRIP):
         else:
             y = WORLD_HEIGHT - gap
         return clamp_to_arena(x, y, EDGE_BAND[0])
+    # Everyone else is drawn slightly toward the middle, where the action is
+    x += (WORLD_WIDTH / 2 - x) * CENTER_PULL
+    y += (WORLD_HEIGHT / 2 - y) * CENTER_PULL
     return clamp_to_arena(x, y, FLEE_EDGE_MARGIN)
 
 
@@ -192,8 +195,21 @@ def explore(player):
         player.target = None
         return
     if player.explore_point is None:
-        player.explore_point = choose_explore_point(player)
+        if player.alliance is not None and len(player.alliance.members) >= CAMP_ALLIANCE_SIZE:
+            player.explore_point = camp_point()
+        else:
+            player.explore_point = choose_explore_point(player)
     player.target = player.explore_point
+
+
+def camp_point():
+    """A big alliance holds the middle of the arena (like the Careers in the
+    books): it only wanders to random points within CAMP_RADIUS of the
+    cornucopia (the center of the world). sqrt spreads points evenly over the circle."""
+    angle = random.uniform(0, 2 * math.pi)
+    radius = CAMP_RADIUS * math.sqrt(random.random())
+    return clamp_to_arena(WORLD_WIDTH / 2 + math.cos(angle) * radius,
+                          WORLD_HEIGHT / 2 + math.sin(angle) * radius, ARRIVE_DISTANCE)
 
 
 def shelter_spot(player, arena):
@@ -279,10 +295,12 @@ def look_around(player, arena, players):
     # Alliance members keep watch for each other, so they notice other
     # players from further away than a player on its own would
     radius = ALLIANCE_SENSE_RADIUS if player.alliance is not None else VISION_RADIUS
+    # Players running out at the start are left alone: nobody attacks them
+    # or offers them an alliance until they have finished fleeing
     player.visible_players = [
         other for other in players
         if other is not player and other.alive and not is_ally(player, other)
-        and can_see(player, other, radius)
+        and other.state != FLEE_OUTWARD and can_see(player, other, radius)
     ]
 
 

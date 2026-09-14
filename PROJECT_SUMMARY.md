@@ -221,6 +221,42 @@ the next step onward.)
   starts new Games with the same names, Esc quits. Measured over 5 seeds:
   games end at 3:00–4:19, bloodbath 1–7 deaths, opening alliances reach
   5 members, no sleep deaths.
+- **Alliance merges, chase advantage, cornucopia camp** — two alliances
+  meeting face to face merge with chance 0.15 if the result has at most 5
+  members (`alliances.try_to_merge`; the bigger group absorbs the smaller,
+  strongest member leads). A fight that ends a chase of at least 1 s (the
+  attacker's or its leader's `hunt_timer`, stored as `Fight.chase`) gives the
+  chaser ×1.3 strength and multiplies the chased loser's escape chance by
+  0.6. Alliances of 4+ members explore only within 350 px of the cornucopia
+  (`ai.camp_point`). Checked lightly over 4 seeds: about 1 merge per 4
+  games, roughly a third of fights follow a chase, big-alliance leaders stay
+  a median 150–290 px from the center.
+- **Smaller arena, slower walking, districts** — world 2600×1950; speeds
+  0.4–1.0 px/frame; vision 75 px; `HUNTING` speed ×1.65 (avoiding stays
+  ×1.5, so chasers gain on their prey). Each player has a `district`
+  (id // 2 + 1), shown as "Name (3)" above the dot. Two district partners
+  meeting — or a loner meeting an alliance that holds its partner — ally
+  with chance 0.9 (`SAME_DISTRICT_ALLIANCE_CHANCE`, replaces the normal and
+  bloodbath chances).
+- **Calmer start, slower pace, smaller map** — world 2200×1650; speeds
+  0.3–0.75 px/frame; `RUSH_LOOT`/`FLEE_OUTWARD` speed ×1.1 (was ×1.3);
+  flee up to 8 s toward 550 px out. Players in `FLEE_OUTWARD` are left out
+  of everyone's `visible_players`, so they can't be attacked or offered an
+  alliance while fleeing. Needs last longer (hunger 160 s, thirst 130 s,
+  sleep 85 s). Alliance chance 0.3, bloodbath new-alliance chance 0.17, max
+  alliance size 6. Exploring trips at least 500 px (explorers 850 px);
+  marsh search 600 px.
+- **More rushers, loners, more alliances** — rush bias 0.25; alliance
+  chance 0.4. Each game 2–6 random players get the "no alliance" trait
+  (`Player.loner`, set in `main.create_starting_players`; `LONERS_PER_GAME`):
+  they never form, join or merge into an alliance, not even with their
+  district partner.
+- **Center pull, even more alliances, bloodbath end, vision** — exploring
+  and searching destinations (not edge dwellers') are moved 15% of the way
+  toward the middle (`CENTER_PULL`). Alliance chance 0.5. Vision 90 px
+  (alliance sense radius 115 px). "The bloodbath is over" is only logged
+  once no fight is in progress and none has been for 0.5 s
+  (`BLOODBATH_END_QUIET_SECONDS`, `Simulation.quiet_frames`).
 
 All planned features, including the post-run summary (the debrief), are
 implemented.
