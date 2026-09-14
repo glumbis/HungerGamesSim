@@ -17,6 +17,7 @@ from config import (
     TEMPERAMENT_WEIGHTS, AGGRESSION_RANGES, ROAMING_WEIGHTS,
     SPRINT_SECONDS, STAMINA_RECOVERY_SECONDS, NAME_MIN_ZOOM, NAME_TEXT_COLOR,
     TERRAIN_SPEED, SAND_THIRST_FACTOR, MARSH_REFILL_SECONDS,
+    WEAPON_ICON_COLOR, SLEEP_ICON_COLOR,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -33,6 +34,8 @@ class Player:
         self.name = name
         self.district = player_id // 2 + 1  # players 0 and 1 are District 1, 2 and 3 are District 2, ...
         self.loner = False          # "no alliance" trait: never allies with anyone (set in main.py)
+        self.killer_armed = False   # if killed in a fight: did the killer have a weapon? (for the event text)
+        self.died_in_bloodbath = False
         self.name_label = None      # the name and district rendered as an image, made the first time it is drawn
         self.x = x
         self.y = y
@@ -100,8 +103,8 @@ class Player:
         self.heard_timer = 0        # frames left that it still cares about that noise
         self.terrain = "meadow"     # terrain type under the player (updated by ai.look_around)
         self.water_spot = None      # marsh it is heading for to drink (False: none within reach)
-        self.tip_target = None      # player the Gamemakers pointed it at after a quiet spell
-        self.tip_timer = 0          # frames left to go after that player
+        self.tip_target = None      # point near the cornucopia it was sent to after a quiet spell
+        self.tip_timer = 0          # frames left to keep heading there
         self.retreat_timer = 0      # frames left backing off after a fight (can't fight meanwhile)
         self.retreat_from = None    # the opponent being backed away from
 
@@ -255,6 +258,7 @@ class Player:
             # Red outline = carrying a weapon
             pygame.draw.circle(screen, LOOT_COLORS["weapon"], center, radius + camera.size(2, 1), 1)
         self.draw_warnings(screen, camera, center, radius)
+        self.draw_status_icons(screen, camera, center, radius)
 
         # The name, small, above the warning dots (hidden when zoomed far out)
         if camera.zoom >= NAME_MIN_ZOOM:
@@ -263,6 +267,34 @@ class Player:
             above_dots = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2) \
                 - camera.size(WARNING_DOT_RADIUS, 1) - 2
             screen.blit(self.name_label, self.name_label.get_rect(midbottom=(center[0], above_dots)))
+
+    def draw_status_icons(self, screen, camera, center, radius):
+        """Small symbols under the dot: a red blade if the player carries a
+        weapon, a "z" if it is sleeping. With both, they sit side by side."""
+        icons = []
+        if self.inventory["weapon"] > 0:
+            icons.append("weapon")
+        if self.state == RESTING:
+            icons.append("sleep")
+        if not icons:
+            return
+        size = camera.size(3, 2)                   # half the width of one symbol
+        spacing = camera.size(WARNING_DOT_SPACING, 3) + size
+        top = center[1] + radius + camera.size(2, 2)
+        for slot, icon in enumerate(icons):
+            # one symbol: centered; two: one left, one right of the center
+            x = center[0] + (slot - (len(icons) - 1) / 2) * spacing
+            if icon == "weapon":
+                # a short diagonal blade with a small crossguard
+                pygame.draw.line(screen, WEAPON_ICON_COLOR,
+                                 (x - size, top + 2 * size), (x + size, top), 2)
+                pygame.draw.line(screen, WEAPON_ICON_COLOR,
+                                 (x - size, top + size), (x, top + 2 * size), 1)
+            else:
+                # a "z": top line, diagonal, bottom line
+                points = [(x - size, top), (x + size, top),
+                          (x - size, top + 2 * size), (x + size, top + 2 * size)]
+                pygame.draw.lines(screen, SLEEP_ICON_COLOR, False, points, 1)
 
     def draw_warnings(self, screen, camera, center, radius):
         """Draw a small colored dot above the player for each need below

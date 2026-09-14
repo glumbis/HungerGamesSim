@@ -4,6 +4,7 @@ members loosely follow it."""
 import random
 
 import events
+import narration
 from config import (
     FPS, LOOT_RESTORES, LOOT_USE_THRESHOLD,
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLIANCE_MERGE_CHANCE, SAME_DISTRICT_ALLIANCE_CHANCE,
@@ -85,8 +86,12 @@ class Alliance:
         self.leader = max(self.members, key=lambda member: member.fighting_strength())
 
     def names(self):
-        """Member names as text, e.g. "Cato, Clove, Glimmer"."""
-        return ", ".join(member.name for member in self.members)
+        """Member names as text, e.g. "Cato, Clove and Glimmer"."""
+        names = [member.name for member in self.members]
+        if len(names) <= 1:
+            return "".join(names)
+        # all but the last joined with commas, then "and" before the last
+        return ", ".join(names[:-1]) + " and " + names[-1]
 
 
 def try_to_ally(player, other, chance=None):
@@ -114,6 +119,7 @@ def try_to_ally(player, other, chance=None):
 
     # An alliance answers through its leader
     other_side = other.alliance.leader if other.alliance else other
+    chance_given = chance is not None  # a chance is only passed in during the bloodbath
     if chance is None:
         chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
     # Tributes from the same district very likely stick together: the two who
@@ -130,13 +136,13 @@ def try_to_ally(player, other, chance=None):
 
     if group is None:
         alliance = Alliance(player, other)
-        events.log(f"{alliance.style.capitalize()} alliance formed: {alliance.names()} "
-                   f"(leader: {alliance.leader.name}).")
+        events.counts["alliances formed"] += 1
+        events.log(narration.alliance_formed(alliance, bloodbath=chance_given))
     else:
         newcomer = other if group is player.alliance else player
         group.add(newcomer)
-        events.log(f"{newcomer.name} joined the alliance led by {group.leader.name} "
-                   f"({group.names()}).")
+        events.log(narration.pick(narration.ALLIANCE_JOINED,
+                                  newcomer=newcomer.name, leader=group.leader.name))
     return True
 
 
@@ -163,7 +169,8 @@ def try_to_merge(player, other):
         other_group.members.remove(member)
         group.add(member)
     group.choose_new_leader()
-    events.log(f"Two alliances merged: {group.names()} (leader: {group.leader.name}).")
+    events.log(narration.pick(narration.ALLIANCE_MERGED,
+                              names=group.names(), leader=group.leader.name))
     return True
 
 
@@ -186,7 +193,7 @@ def share_supplies(players):
 
 def disband(alliance, reason):
     if alliance.members:
-        events.log(f"The alliance of {alliance.names()} broke up ({reason}).")
+        events.log(narration.alliance_broke_up(alliance, reason))
     for member in list(alliance.members):  # copy: remove() changes the list
         alliance.remove(member)
 
@@ -200,13 +207,14 @@ def betray(player):
     player.prey = victim
     player.prey_last_seen = (victim.x, victim.y)
     player.hunt_timer = 0
-    events.log(f"{player.name} betrayed the alliance and turned on {victim.name}!")
+    events.counts["betrayals"] += 1
+    events.log(narration.pick(narration.BETRAYAL, traitor=player.name, victim=victim.name))
 
     if len(alliance.members) < 2:
         disband(alliance, "betrayal")
     elif alliance.leader is player:
         alliance.choose_new_leader()
-        events.log(f"{alliance.leader.name} now leads the alliance ({alliance.names()}).")
+        events.log(narration.pick(narration.NEW_LEADER, leader=alliance.leader.name))
 
 
 def update_alliances(players):
@@ -225,7 +233,7 @@ def update_alliances(players):
             disband(alliance, "too few members left")
         elif not alliance.leader.alive:
             alliance.choose_new_leader()
-            events.log(f"{alliance.leader.name} now leads the alliance ({alliance.names()}).")
+            events.log(narration.pick(narration.NEW_LEADER, leader=alliance.leader.name))
 
     # Betrayal: a small chance every frame, higher for aggressive members
     for player in players:

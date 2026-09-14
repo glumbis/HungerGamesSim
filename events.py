@@ -1,5 +1,7 @@
 """The event feed: key moments (eliminations, alliance news, the winner)
 shown in the bottom-left corner of the screen and printed to the terminal."""
+from collections import Counter
+
 from config import (
     FPS,
     FEED_MAX_LINES, FEED_SECONDS, FEED_LINE_HEIGHT, FEED_TEXT_COLOR, FEED_SHADOW_COLOR,
@@ -8,6 +10,7 @@ from config import (
 entries = []     # events on screen, oldest first; each is [text, frames_left]
 history = []     # every event of the current game, oldest first (for the debrief)
 frame_count = 0  # frames since the start, used for the timestamps
+counts = Counter()  # how often some things happened, e.g. counts["betrayals"] (for the debrief)
 
 
 def reset():
@@ -15,6 +18,7 @@ def reset():
     global frame_count  # see update() for what `global` does
     entries.clear()
     history.clear()
+    counts.clear()
     frame_count = 0
 
 

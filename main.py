@@ -18,6 +18,7 @@ import ai
 import alliances
 import combat
 import events
+import narration
 
 
 def create_starting_players(arena, names):
@@ -47,6 +48,7 @@ class Simulation:
         self.opening_over = False   # True once the rush and flight from the cornucopia are done
         self.bloodbath_deaths = 0
         self.quiet_frames = 0       # frames in a row with no fight going on
+        ai.lull_active = False      # a new game starts without a quiet spell
         self.finale_announced = False
         self.game_over = False
 
@@ -63,7 +65,7 @@ class Simulation:
             if self.countdown_frames == 0:
                 for player in self.players:
                     ai.choose_opening_state(player, self.arena)
-                events.log("The Games have begun!")
+                events.log(narration.pick(narration.GAMES_BEGIN))
             return
         self.frames_since_start += 1
 
@@ -83,15 +85,13 @@ class Simulation:
         combat.handle_fights(players, self.arena)
         self.arena.update_flashes()
 
-        # A long quiet spell (not during the opening or the finale): the
-        # Gamemakers point the aggressive players at the nearest tributes
+        # A long quiet spell (not during the opening or the finale): some
+        # random players and alliances quietly head for the middle
         if self.opening_over and len(players) > SHOWDOWN_PLAYERS and \
                 self.arena.frames_since_fight >= LULL_SECONDS * FPS:
             self.arena.frames_since_fight = 0
-            told = ai.reveal_positions(players)
-            if told:
-                events.log(f"The arena has gone quiet. The Gamemakers reveal nearby "
-                           f"tributes to {told} hunter(s).")
+            ai.send_to_middle(players, self.arena)
+            ai.lull_active = True  # avoidant players are a little bolder until the next fight
         events.update()
 
         # Remove players who died this step. Everyone who falls in the same
@@ -102,10 +102,11 @@ class Simulation:
                 player.placement = len(survivors) + 1
                 player.death_frame = self.frames_since_start
                 if player.cause_of_death == "combat":
-                    how = f"was eliminated by {player.killer_name}"
+                    how = narration.kill(player.name, player.killer_name,
+                                         player.killer_armed, player.died_in_bloodbath)
                 else:
-                    how = f"died of {player.cause_of_death}"
-                events.log(f"{player.name} {how}. {len(survivors)} remaining.")
+                    how = narration.death(player.name, player.cause_of_death)
+                events.log(f"{how} {narration.remaining(len(survivors))}")
         self.players = survivors
 
         # Remove dead members, replace dead leaders, handle betrayals
@@ -120,22 +121,20 @@ class Simulation:
                 not any(player.state in opening_states for player in self.players):
             self.opening_over = True
             self.bloodbath_deaths = NUM_PLAYERS - len(self.players)
-            events.log(f"The bloodbath is over: {self.bloodbath_deaths} tribute(s) fell.")
+            events.log(narration.bloodbath_over(self.bloodbath_deaths))
 
         if not self.finale_announced and 1 < len(self.players) <= SHOWDOWN_PLAYERS:
             self.finale_announced = True
-            events.log(f"The finale! {len(self.players)} tributes remain and are drawn "
-                       f"to the cornucopia to fight to the death.")
+            events.log(narration.pick(narration.FINALE, n=len(self.players)))
 
         if not self.game_over and len(self.players) <= 1:
             self.game_over = True
             if self.players:
                 winner = self.players[0]
                 winner.placement = 1
-                events.log(f"{winner.name} ({winner.temperament}) is the last one standing, "
-                           f"with {winner.kills} kill(s).")
+                events.log(narration.pick(narration.WINNER, winner=winner.name, kills=winner.kills))
             else:
-                events.log("No survivors.")
+                events.log(narration.pick(narration.NO_SURVIVORS))
 
         # Living players pick up any loot they are touching
         self.arena.handle_pickups(self.players)

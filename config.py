@@ -261,8 +261,14 @@ FIGHT_RING_COLOR = (255, 110, 60)  # pulsing ring around a fight in progress
 FIGHT_ALERT_RADIUS = 300    # players this close hear a fight start
 ALERT_SECONDS = 8           # how long a player remembers where it heard a fight
 INVESTIGATE_MIN_FIGHT_CHANCE = 0.7  # only players at least this likely to fight go toward a fight they hear
-LULL_SECONDS = 45           # no fight for this long: aggressive players are told where others are
-TIP_SECONDS = 25            # ...and head for that player for at most this long
+LULL_SECONDS = 25           # no fight for this long: some random players/alliances head for the middle...
+LULL_FIGHT_BONUS = 0.15     # ...and until the next fight, players who usually avoid (fight chance < 0.5) get this added
+TIP_SECONDS = 25            # ...for at most this long...
+LULL_GATHER_SHARE = 0.4     # ...this share of the loners and alliance leaders (at least 2)...
+GATHER_RADIUS = 150         # ...until they are this close to the cornucopia
+# Status symbols drawn under a player's dot
+WEAPON_ICON_COLOR = (200, 60, 60)   # small blade = carries a weapon
+SLEEP_ICON_COLOR = (180, 160, 255)  # small "z" = sleeping
 
 # Stamina: sprinting (hunting, avoiding, ...) tires players out
 SPRINT_SECONDS = 4          # full stamina lasts this long while sprinting; then no more sprinting

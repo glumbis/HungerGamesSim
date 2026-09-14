@@ -21,7 +21,11 @@ from config import (
     EXPLORE_MIN_TRIP, EXPLORER_MIN_TRIP, TIP_SECONDS, INVESTIGATE_MIN_FIGHT_CHANCE,
     SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
     BLOODBATH_JOIN_CHANCE, CAMP_ALLIANCE_SIZE, CAMP_RADIUS, CENTER_PULL,
+    LULL_GATHER_SHARE, GATHER_RADIUS, LULL_FIGHT_BONUS,
 )
+
+# True from a quiet spell (see main.py) until the next fight starts (combat.py)
+lull_active = False
 from utils import distance, angle_to
 
 # Player states
@@ -388,7 +392,16 @@ def fight_chance(player, other=None):
     - bloodthirsty alliances and killers always fight (1.0)
     - defensive alliances and cowards never choose to (0.0)
     Otherwise: aggression, plus a bonus for every extra alliance member,
-    lowered if `other` is armed and nobody in the group is. Never above 1."""
+    lowered if `other` is armed and nobody in the group is. Never above 1.
+    During a quiet spell, players who usually avoid (below 0.5) get a little
+    bolder: LULL_FIGHT_BONUS is added."""
+    chance = base_fight_chance(player, other)
+    if lull_active and chance < 0.5:
+        chance += LULL_FIGHT_BONUS
+    return min(chance, 1.0)
+
+
+def base_fight_chance(player, other):
     if player.alliance is not None:
         if player.alliance.style == "bloodthirsty":
             return 1.0
@@ -405,7 +418,7 @@ def fight_chance(player, other=None):
     group_armed = any(member.inventory["weapon"] > 0 for member in group)
     if other is not None and other.inventory["weapon"] > 0 and not group_armed:
         chance *= WEAPON_FEAR_FACTOR  # wary of an armed opponent
-    return min(chance, 1.0)
+    return chance
 
 
 def choose_reaction(player, other):
@@ -513,9 +526,10 @@ def react_to_players(player, visible_players, need):
             player.hunt_timer = 0
 
     # Continue an ongoing hunt. If the prey is out of sight and there is an
-    # urgent need, the need wins and the hunt is dropped.
+    # urgent food or water need, the need wins and the hunt is dropped.
+    # (Tiredness never interrupts a hunt: resting only starts afterwards.)
     if player.prey is not None:
-        if player.prey in visible_players or need is None:
+        if player.prey in visible_players or need in (None, "sleep"):
             if hunt(player, visible_players):
                 return True
         else:
@@ -576,40 +590,35 @@ def track(leader, players):
     return True
 
 
-def reveal_positions(players):
-    """After a long quiet spell the Gamemakers step in: every aggressive
-    player (fight chance at least 0.5) that decides for itself — on its own
-    or leading an alliance — is told where the nearest non-ally is, and goes
-    after it (see follow_tip). Returns how many players were told."""
-    told = 0
-    for player in players:
-        if player.alliance is not None and player.alliance.leader is not player:
-            continue  # members follow their leader
-        if player.fight is not None or fight_chance(player) < 0.5:
-            continue
-        others = [other for other in players
-                  if other is not player and other.alive and not is_ally(player, other)]
-        target = nearest(player, others)
-        if target is not None:
-            player.tip_target = target
-            player.tip_timer = TIP_SECONDS * FPS
-            told += 1
-    return told
+def send_to_middle(players, arena):
+    """After a long quiet spell, quietly (no announcement) a random share of
+    the players who decide for themselves — loners and alliance leaders —
+    start walking toward the cornucopia, so tributes run into each other
+    again. Alliance members simply follow their leader."""
+    deciders = [player for player in players if player.fight is None and
+                (player.alliance is None or player.alliance.leader is player)]
+    count = min(len(deciders), max(2, round(len(deciders) * LULL_GATHER_SHARE)))
+    for player in random.sample(deciders, count):
+        # A point near the cornucopia, a little different for each player
+        angle = random.uniform(0, 2 * math.pi)
+        player.tip_target = (arena.center_x + math.cos(angle) * GATHER_RADIUS / 2,
+                             arena.center_y + math.sin(angle) * GATHER_RADIUS / 2)
+        player.tip_timer = TIP_SECONDS * FPS
 
 
 def follow_tip(player):
-    """Head straight for the player the Gamemakers revealed, until it comes
-    into sight (then the normal fight or avoid rules take over) or time runs
-    out. Returns True if doing so this frame."""
-    target = player.tip_target
-    if target is None:
+    """Head for the middle after being sent there (see send_to_middle),
+    until close to the cornucopia or time runs out. Players met on the way
+    are handled by the normal rules first. Returns True if doing so this frame."""
+    if player.tip_target is None:
         return False
     player.tip_timer -= 1
-    if player.tip_timer <= 0 or not target.alive or is_ally(player, target):
+    if player.tip_timer <= 0 or \
+            distance(player.x, player.y, *player.tip_target) < GATHER_RADIUS / 2:
         player.tip_target = None
         return False
     set_state(player, TRACKING)
-    player.target = (target.x, target.y)
+    player.target = player.tip_target
     return True
 
 
@@ -733,7 +742,10 @@ def decide(player, arena, players):
     # 0a. Too tired to go on: collapse and sleep right here until rested,
     #     whatever else is going on (so nobody dies of lack of sleep while
     #     walking to shelter, avoiding someone or fighting in the finale)
-    if player.needs["sleep"] < SLEEP_COLLAPSE_THRESHOLD:
+    #     Never while hunting or escaping, though: that is finished first.
+    busy = player.prey is not None or player.state == AVOIDING or \
+        player.avoid_timer > 0 or player.retreat_timer > 0
+    if player.needs["sleep"] < SLEEP_COLLAPSE_THRESHOLD and not busy:
         player.collapsed = True
     if player.collapsed:
         if player.needs["sleep"] < REST_UNTIL:

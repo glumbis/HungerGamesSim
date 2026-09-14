@@ -257,6 +257,29 @@ the next step onward.)
   (alliance sense radius 115 px). "The bloodbath is over" is only logged
   once no fight is in progress and none has been for 0.5 s
   (`BLOODBATH_END_QUIET_SECONDS`, `Simulation.quiet_frames`).
+- **Quiet spells, no rest while busy, status symbols** — after 45 s without
+  a fight there is no announcement any more: `ai.send_to_middle` quietly
+  sends a random 40% (at least 2) of the loners and alliance leaders toward
+  a point near the cornucopia for up to 25 s (`follow_tip`, stops within
+  75 px). Resting never starts while hunting or escaping: the sleep collapse
+  waits until the player has no prey, isn't avoiding and has no retreat or
+  avoid timer left, and tiredness no longer cancels a hunt. Under the dot,
+  a small red blade marks a weapon and a small "z" marks a sleeping player
+  (`Player.draw_status_icons`).
+- **Shorter quiet spells, bolder avoidants** — the quiet spell now starts
+  after 25 s without a fight (`LULL_SECONDS`). From then until the next
+  fight starts (`ai.lull_active`, set in `main.py`, cleared in
+  `combat.start_fight`), players whose fight chance is below 0.5 (cowards
+  and defensive alliances included) get +0.15 (`LULL_FIGHT_BONUS`).
+- **Hunger Games narration** — `narration.py` holds long lists of
+  book-flavored lines for every logged event (Games begin, kills with or
+  without a weapon plus extra bloodbath lines, deaths by hunger/thirst/
+  sleep, tributes remaining, alliance formed (extra bloodbath lines),
+  joined, merged, broke up (per reason), betrayal, new leader, escape,
+  standoff, both hurt, bloodbath over, finale, winner, no survivors); one
+  line is picked at random each time. Escapes, standoffs and mutual losses
+  are now logged too. The debrief counts alliances and betrayals through
+  `events.counts` instead of searching the log text.
 
 All planned features, including the post-run summary (the debrief), are
 implemented.

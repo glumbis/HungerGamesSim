@@ -53,8 +53,8 @@ def stats_lines(sim):
         f"Fell in the bloodbath: {sim.bloodbath_deaths}",
         f"Killed in combat: {causes['combat']}",
         f"Hunger / thirst / sleep: {causes['hunger']} / {causes['thirst']} / {causes['sleep']}",
-        f"Alliances formed: {sum('alliance formed' in line for line in events.history)}",
-        f"Betrayals: {sum('betrayed' in line for line in events.history)}",
+        f"Alliances formed: {events.counts['alliances formed']}",
+        f"Betrayals: {events.counts['betrayals']}",
         f"Most kills: {top_killer.name} ({top_killer.kills})",
     ]
 

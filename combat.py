@@ -14,6 +14,9 @@ from config import (
     TIRED_ESCAPE_FACTOR, BLOODBATH_OUTCOME_WEIGHTS, BLOODBATH_ESCAPE_FACTOR,
     CHASE_MIN_SECONDS, CHASER_STRENGTH_FACTOR, CHASED_ESCAPE_FACTOR,
 )
+import ai
+import events
+import narration
 from ai import stop_hunting, set_state, RESTING, FIGHTING
 from utils import distance
 
@@ -89,6 +92,7 @@ def start_fight(attacker, defender, arena, players, to_the_death):
     fight = Fight(attacker, defender, to_the_death, arena.bloodbath)
     arena.fights.append(fight)
     arena.frames_since_fight = 0  # the arena is no longer quiet
+    ai.lull_active = False        # so the quiet-spell boldness ends
     arena.fights_started += 1     # for the debrief
     for fighter in (attacker, defender):
         fighter.fight = fight
@@ -154,11 +158,14 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=Fals
             retreat(winner, loser)
             retreat(loser, winner)
             print(summary + f"{loser.name} lost but escaped, dropping supplies.")
+            events.log(narration.pick(narration.ESCAPE, loser=loser.name, winner=winner.name))
         else:
             loser.alive = False
             loser.cause_of_death = "combat"
             loser.killer_id = winner.id
             loser.killer_name = winner.name
+            loser.killer_armed = winner.inventory["weapon"] > 0  # for the event description
+            loser.died_in_bloodbath = bloodbath
             winner.kills += 1
             drop_items(loser, arena, 1.0)  # everything it carried
             stop_hunting(winner)
@@ -167,12 +174,14 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=Fals
         retreat(attacker, defender)
         retreat(defender, attacker)
         print(summary + "standoff, both backed off.")
+        events.log(narration.pick(narration.STANDOFF, a=attacker.name, b=defender.name))
     else:  # MUTUAL_LOSS
         drop_random_item(attacker, arena)
         drop_random_item(defender, arena)
         retreat(attacker, defender)
         retreat(defender, attacker)
         print(summary + "both hurt, each dropped an item and backed off.")
+        events.log(narration.pick(narration.MUTUAL_LOSS, a=attacker.name, b=defender.name))
 
 
 def retreat(player, opponent):
