@@ -1,7 +1,7 @@
 """The event feed: key moments (eliminations, alliance news, the winner)
 shown in the bottom-left corner of the screen and printed to the terminal."""
 from config import (
-    FPS, SCREEN_HEIGHT,
+    FPS,
     FEED_MAX_LINES, FEED_SECONDS, FEED_LINE_HEIGHT, FEED_TEXT_COLOR, FEED_SHADOW_COLOR,
 )
 
@@ -32,7 +32,7 @@ def update():
 def draw(screen, font):
     """Newest event at the bottom, older ones above it. Each line has a dark
     shadow for readability and fades out during its last second."""
-    y = SCREEN_HEIGHT - 8 - FEED_LINE_HEIGHT * len(entries)
+    y = screen.get_height() - 8 - FEED_LINE_HEIGHT * len(entries)
     for text, frames_left in entries:
         alpha = 255 if frames_left > FPS else int(255 * frames_left / FPS)  # 255 = fully visible
         shadow = font.render(text, True, FEED_SHADOW_COLOR)

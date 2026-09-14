@@ -6,7 +6,7 @@ import random
 
 import alliances
 from config import (
-    FPS, SCREEN_WIDTH, SCREEN_HEIGHT,
+    FPS, WORLD_WIDTH, WORLD_HEIGHT,
     VISION_RADIUS, ARRIVE_DISTANCE, RUSH_DURATION, FLEE_DURATION,
     FLEE_DISTANCE, FLEE_EDGE_MARGIN,
     SEEK_THRESHOLD, REST_THRESHOLD, REST_UNTIL, LOOT_RESTORES,
@@ -15,11 +15,13 @@ from config import (
     EXPLORE_CELL_SIZE, EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX, SHELTER_WALL_MARGIN,
     STALK_DISTANCE, ALLIANCE_SENSE_RADIUS, ALLIANCE_AGGRESSION_BONUS,
     TRACK_RADIUS, TRACK_STEP, TRACK_ANGLE_NOISE, TRACK_UPDATE_SECONDS, TRACK_MIN_FIGHT_CHANCE,
-    EXPLORER_PAUSE_FACTOR, SHOWDOWN_PLAYERS, EDGE_BAND,
+    EXPLORER_PAUSE_FACTOR, SHOWDOWN_PLAYERS, EDGE_BAND, BLOODBATH_RADIUS, RUSH_BIAS,
+    FIGHT_ALERT_RADIUS, FINALE_RADIUS, SHELTER_MAX_DISTANCE,
 )
 from utils import distance, angle_to
 
 # Player states
+WAITING = "WAITING"             # on the launch plate during the countdown
 RUSH_LOOT = "RUSH_LOOT"         # start: aggressive players run for the central loot
 FLEE_OUTWARD = "FLEE_OUTWARD"   # start: cautious players run away from the center
 SHELTERING = "SHELTERING"       # tired: walking to a quiet spot by a wall to sleep
@@ -32,9 +34,13 @@ GATHERING = "GATHERING"         # no urgent need; collecting visible loot
 FOLLOWING = "FOLLOWING"         # alliance member staying near its leader
 TRACKING = "TRACKING"           # aggressive alliance heading roughly toward unseen players
 EXPLORING = "EXPLORING"         # nothing urgent: heading for unvisited parts of the arena
+FIGHTING = "FIGHTING"           # locked in a fight until it is decided
+INVESTIGATING = "INVESTIGATING" # heard a fight and is going to see what is happening
+CONVERGING = "CONVERGING"       # finale: heading for the cornucopia
 
 # Dot color for each state in the debug view
 STATE_COLORS = {
+    WAITING: (150, 150, 150),       # grey
     RUSH_LOOT: (230, 200, 60),      # yellow
     FLEE_OUTWARD: (120, 200, 120),  # green
     SHELTERING: (90, 150, 200),     # steel blue
@@ -47,6 +53,9 @@ STATE_COLORS = {
     FOLLOWING: (200, 160, 255),     # lavender
     TRACKING: (255, 130, 90),       # coral
     EXPLORING: (220, 220, 220),     # white
+    FIGHTING: (255, 255, 0),        # bright yellow
+    INVESTIGATING: (255, 190, 120), # peach
+    CONVERGING: (205, 165, 70),     # gold
 }
 
 # How a player reacts to another player it sees
@@ -64,8 +73,8 @@ def set_state(player, state):
 
 def clamp_to_arena(x, y, margin):
     """Move a point inside the arena, at least `margin` from every wall."""
-    x = max(margin, min(x, SCREEN_WIDTH - margin))
-    y = max(margin, min(y, SCREEN_HEIGHT - margin))
+    x = max(margin, min(x, WORLD_WIDTH - margin))
+    y = max(margin, min(y, WORLD_HEIGHT - margin))
     return x, y
 
 
@@ -98,8 +107,8 @@ def choose_explore_point(player, roaming=None):
     - "normal": one of the three nearest unvisited cells
     Once every candidate cell has been visited, it starts over."""
     roaming = roaming or player.roaming  # `or`: use player.roaming if roaming is None
-    cols = math.ceil(SCREEN_WIDTH / EXPLORE_CELL_SIZE)
-    rows = math.ceil(SCREEN_HEIGHT / EXPLORE_CELL_SIZE)
+    cols = math.ceil(WORLD_WIDTH / EXPLORE_CELL_SIZE)
+    rows = math.ceil(WORLD_HEIGHT / EXPLORE_CELL_SIZE)
     candidates = [(col, row) for col in range(cols) for row in range(rows)]
     if roaming == "edge":
         candidates = [(col, row) for col, row in candidates
@@ -128,16 +137,16 @@ def choose_explore_point(player, roaming=None):
         # Hug the wall: move the point to within EDGE_BAND of the nearest wall.
         # The * in uniform(*EDGE_BAND) unpacks the (min, max) pair into two arguments.
         gap = random.uniform(*EDGE_BAND)
-        walls = [(x, "left"), (SCREEN_WIDTH - x, "right"), (y, "top"), (SCREEN_HEIGHT - y, "bottom")]
+        walls = [(x, "left"), (WORLD_WIDTH - x, "right"), (y, "top"), (WORLD_HEIGHT - y, "bottom")]
         nearest_wall = min(walls)[1]  # the smallest distance wins
         if nearest_wall == "left":
             x = gap
         elif nearest_wall == "right":
-            x = SCREEN_WIDTH - gap
+            x = WORLD_WIDTH - gap
         elif nearest_wall == "top":
             y = gap
         else:
-            y = SCREEN_HEIGHT - gap
+            y = WORLD_HEIGHT - gap
         return clamp_to_arena(x, y, EDGE_BAND[0])
     return clamp_to_arena(x, y, FLEE_EDGE_MARGIN)
 
@@ -165,16 +174,24 @@ def explore(player):
 
 
 def shelter_spot(player):
-    """A spot SHELTER_WALL_MARGIN from the wall nearest to the player, away
-    from the busy center. Each option is (distance to that wall, spot)."""
+    """A spot toward the wall nearest to the player, away from the busy
+    center: SHELTER_WALL_MARGIN from that wall, but never more than
+    SHELTER_MAX_DISTANCE away, so a tired player doesn't cross half the
+    arena to sleep. Each option is (distance to that wall, spot)."""
     options = [
         (player.x, (SHELTER_WALL_MARGIN, player.y)),                                  # left
-        (SCREEN_WIDTH - player.x, (SCREEN_WIDTH - SHELTER_WALL_MARGIN, player.y)),    # right
+        (WORLD_WIDTH - player.x, (WORLD_WIDTH - SHELTER_WALL_MARGIN, player.y)),    # right
         (player.y, (player.x, SHELTER_WALL_MARGIN)),                                  # top
-        (SCREEN_HEIGHT - player.y, (player.x, SCREEN_HEIGHT - SHELTER_WALL_MARGIN)),  # bottom
+        (WORLD_HEIGHT - player.y, (player.x, WORLD_HEIGHT - SHELTER_WALL_MARGIN)),  # bottom
     ]
-    closest = min(options, key=lambda option: option[0])
-    return closest[1]
+    spot_x, spot_y = min(options, key=lambda option: option[0])[1]
+    walk = distance(player.x, player.y, spot_x, spot_y)
+    if walk > SHELTER_MAX_DISTANCE:
+        # Only go part of the way, along the same line
+        share = SHELTER_MAX_DISTANCE / walk
+        spot_x = player.x + (spot_x - player.x) * share
+        spot_y = player.y + (spot_y - player.y) * share
+    return spot_x, spot_y
 
 
 def choose_opening_state(player, arena):
@@ -186,7 +203,7 @@ def choose_opening_state(player, arena):
     elif player.temperament == "coward":
         rushes = False
     else:
-        rushes = random.random() < player.aggression
+        rushes = random.random() < player.aggression + RUSH_BIAS  # the cornucopia tempts many
 
     if rushes:
         set_state(player, RUSH_LOOT)
@@ -196,7 +213,7 @@ def choose_opening_state(player, arena):
         # variation in direction). Edge dwellers run all the way to the wall.
         away = angle_to(arena.center_x, arena.center_y, player.x, player.y)
         away += random.uniform(-0.3, 0.3)
-        flee_distance = FLEE_DISTANCE if player.roaming != "edge" else max(SCREEN_WIDTH, SCREEN_HEIGHT)
+        flee_distance = FLEE_DISTANCE if player.roaming != "edge" else max(WORLD_WIDTH, WORLD_HEIGHT)
         x = arena.center_x + math.cos(away) * flee_distance
         y = arena.center_y + math.sin(away) * flee_distance
         # Keep the point well clear of the walls
@@ -346,10 +363,11 @@ def stop_hunting(player, cooldown=False):
 
 def chase_target(player, prey):
     """Where a hunter heads. If the hunter or its prey has only just fought,
-    no new fight can start yet, so the hunter waits close by (None = stand
-    still) instead of standing right on top of the prey."""
-    if (prey.retreat_timer > 0 or player.retreat_timer > 0) and \
-            distance(player.x, player.y, prey.x, prey.y) < STALK_DISTANCE:
+    or the prey is busy fighting someone else, no new fight can start yet,
+    so the hunter waits close by (None = stand still) instead of standing
+    right on top of the prey."""
+    busy = prey.retreat_timer > 0 or player.retreat_timer > 0 or prey.fight is not None
+    if busy and distance(player.x, player.y, prey.x, prey.y) < STALK_DISTANCE:
         return None
     return (prey.x, prey.y)
 
@@ -494,6 +512,29 @@ def track(leader, players):
     return True
 
 
+def respond_to_noise(player):
+    """React to a fight heard nearby (see combat.start_fight): players likely
+    to fight go to see what is happening; the others move away from the
+    noise. Returns True if reacting this frame."""
+    if player.heard_timer <= 0:
+        return False
+    noise_x, noise_y = player.heard_fight
+    to_noise = distance(player.x, player.y, noise_x, noise_y)
+    if fight_chance(player) >= 0.5:
+        if to_noise < ARRIVE_DISTANCE * 3:
+            player.heard_timer = 0  # arrived: whatever happened here is over
+            return False
+        set_state(player, INVESTIGATING)
+        player.target = (noise_x, noise_y)
+    else:
+        if to_noise > FIGHT_ALERT_RADIUS:
+            player.heard_timer = 0  # far enough away now
+            return False
+        set_state(player, AVOIDING)
+        player.target = point_away_from(player, noise_x, noise_y)
+    return True
+
+
 def follow_leader(player):
     """Alliance members don't make their own plans: they join the leader's
     hunts, sleep when it sleeps, and otherwise stay close to it."""
@@ -518,7 +559,7 @@ def follow_leader(player):
         return
 
     # Collect loot close to the leader, unless the group is busy
-    if leader.state not in (RESTING, SHELTERING, HUNTING, AVOIDING, TRACKING):
+    if leader.state not in (RESTING, SHELTERING, HUNTING, AVOIDING, TRACKING, FIGHTING, INVESTIGATING):
         wanted = [item for item in player.visible_loot
                   if player.can_carry(item.kind)
                   and distance(item.x, item.y, leader.x, leader.y) <= FOLLOW_LEASH]
@@ -545,15 +586,28 @@ def follow_leader(player):
     player.target = None
 
 
-def showdown(player, players):
-    """Endgame: with only a few players left, everyone knows where the others
-    are and goes straight for the nearest one — no avoiding, no resting."""
+def showdown(player, players, arena):
+    """Endgame finale: with only a few tributes left, every one of them,
+    whatever its personality, heads for the cornucopia. It attacks anyone it
+    sees on the way, and once there, anyone else who has reached the
+    cornucopia. No avoiding, no resting, and every fight is to the death."""
     if player.retreat_timer > 0:
-        player.retreat_timer -= 1  # a back-off from before the showdown still runs out
-    others = [other for other in players if other is not player and other.alive]
-    prey = nearest(player, others)
+        player.retreat_timer -= 1  # a back-off from before the finale still runs out
+    at_cornucopia = distance(player.x, player.y, arena.center_x, arena.center_y) <= FINALE_RADIUS
+    targets = [
+        other for other in players
+        if other is not player and other.alive and (
+            distance(player.x, player.y, other.x, other.y) <= VISION_RADIUS
+            or (at_cornucopia and
+                distance(other.x, other.y, arena.center_x, arena.center_y) <= FINALE_RADIUS)
+        )
+    ]
+    prey = nearest(player, targets)
     if prey is None:
-        player.target = None
+        stop_hunting(player)
+        set_state(player, CONVERGING)
+        # Walk to the cornucopia; once there, wait for the others to arrive
+        player.target = None if at_cornucopia else (arena.center_x, arena.center_y)
         return
     player.prey = prey
     player.prey_last_seen = (prey.x, prey.y)
@@ -567,16 +621,52 @@ def decide(player, arena, players):
     player.state_timer += 1
     if player.hunt_cooldown > 0:
         player.hunt_cooldown -= 1
+    if player.heard_timer > 0:
+        player.heard_timer -= 1
 
-    # 0. Endgame showdown: the last few players hunt each other down
+    # 0. Locked in a fight: stand still until combat.py decides it
+    if player.fight is not None:
+        set_state(player, FIGHTING)
+        player.target = None
+        return
+
+    # 0b. Endgame finale: the last few tributes meet at the cornucopia
     if 1 < len(players) <= SHOWDOWN_PLAYERS:
-        showdown(player, players)
+        showdown(player, players, arena)
         return
 
     # 1. Opening phase: rush or flee until done or time runs out
-    if player.state == RUSH_LOOT and player.state_timer < RUSH_DURATION * FPS:
+    #    (a rusher that was attacked and survived backs off instead, see step 2)
+    if player.state == RUSH_LOOT and player.state_timer < RUSH_DURATION * FPS \
+            and player.retreat_timer == 0:
+        # The bloodbath around the cornucopia:
+        # - anyone who has grabbed a weapon, and killers once they reach the
+        #   horn, attack the nearest player within BLOODBATH_RADIUS
+        # - an unarmed rusher that is being hunted runs for it
+        # - everyone else keeps grabbing loot, weapons first
+        at_cornucopia = distance(player.x, player.y, arena.center_x, arena.center_y) <= BLOODBATH_RADIUS
+        armed = player.inventory["weapon"] > 0
+        if armed or (player.temperament == "killer" and at_cornucopia):
+            close = [other for other in player.visible_players
+                     if distance(player.x, player.y, other.x, other.y) <= BLOODBATH_RADIUS]
+            prey = nearest(player, close)
+            if prey:
+                player.prey = prey
+                player.prey_last_seen = (prey.x, prey.y)
+                player.hunt_timer = 0
+                set_state(player, HUNTING)
+                player.target = chase_target(player, prey)
+                return
+        else:
+            hunters = [other for other in player.visible_players if other.prey is player]
+            threat = nearest(player, hunters)
+            if threat:
+                set_state(player, AVOIDING)
+                player.target = point_away_from(player, threat.x, threat.y)
+                return
         wanted = [item for item in player.visible_loot if player.can_carry(item.kind)]
-        item = nearest(player, wanted)
+        weapons = [item for item in wanted if item.kind == "weapon"]
+        item = nearest(player, weapons or wanted)  # `or`: the weapons if there are any, else everything
         if item:
             player.target = (item.x, item.y)
             return
@@ -663,7 +753,11 @@ def decide(player, arena, players):
             player.target = player.search_point
         return
 
-    # 6. Collect loot in sight that can still be carried
+    # 6. A fight was heard nearby: go and look, or keep away from it
+    if respond_to_noise(player):
+        return
+
+    # 7. Collect loot in sight that can still be carried
     wanted = [item for item in visible_loot if player.can_carry(item.kind)]
     if wanted:
         set_state(player, GATHERING)
@@ -671,9 +765,9 @@ def decide(player, arena, players):
         player.target = (item.x, item.y)
         return
 
-    # 7. Aggressive players and alliances head toward players they can't see yet
+    # 8. Aggressive players and alliances head toward players they can't see yet
     if track(player, players):
         return
 
-    # 8. Nothing urgent: explore
+    # 9. Nothing urgent: explore
     explore(player)

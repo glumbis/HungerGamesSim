@@ -6,7 +6,7 @@ from config import (
     PLAYER_RADIUS, PLAYER_COLOR,
     PLAYER_MIN_SPEED, PLAYER_MAX_SPEED, WANDER_TURN_RATE,
     STEER_TURN_RATE, STEER_SNAP_DISTANCE,
-    SCREEN_WIDTH, SCREEN_HEIGHT, FPS,
+    WORLD_WIDTH, WORLD_HEIGHT, FPS,
     NEED_MAX, NEED_WARNING_THRESHOLD, NEED_SECONDS_TO_EMPTY,
     NEED_RATE_VARIATION, NEED_WARNING_COLORS,
     WARNING_DOT_RADIUS, WARNING_DOT_SPACING, WARNING_DOT_OFFSET_Y,
@@ -15,6 +15,7 @@ from config import (
     LOOT_COLORS, STRENGTH_MIN, STRENGTH_MAX,
     WEAPON_STRENGTH_BONUS, LEADER_RING_COLOR, FOLLOW_LEASH, STATE_SPEED_MULTIPLIERS,
     TEMPERAMENT_WEIGHTS, AGGRESSION_RANGES, ROAMING_WEIGHTS,
+    SPRINT_SECONDS, STAMINA_RECOVERY_SECONDS, NAME_MIN_ZOOM, NAME_TEXT_COLOR,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -24,8 +25,10 @@ REST_RATE = NEED_MAX / (REST_SECONDS_TO_FULL * FPS)
 
 
 class Player:
-    def __init__(self, player_id, x, y):
+    def __init__(self, player_id, x, y, name):
         self.id = player_id
+        self.name = name
+        self.name_label = None      # the name rendered as an image, made the first time it is drawn
         self.x = x
         self.y = y
         self.speed = random.uniform(PLAYER_MIN_SPEED, PLAYER_MAX_SPEED)
@@ -80,6 +83,11 @@ class Player:
         self.strength = random.uniform(STRENGTH_MIN, STRENGTH_MAX)
         self.kills = 0
         self.killer_id = None       # id of the player who eliminated this one
+        self.killer_name = None     # ...and its name
+        self.fight = None           # the fight this player is locked in (combat.Fight), if any
+        self.stamina = 1.0          # 1 = rested, 0 = exhausted (can't sprint)
+        self.heard_fight = None     # (x, y) of the last fight this player heard
+        self.heard_timer = 0        # frames left that it still cares about that noise
         self.retreat_timer = 0      # frames left backing off after a fight (can't fight meanwhile)
         self.retreat_from = None    # the opponent being backed away from
 
@@ -105,27 +113,36 @@ class Player:
           STATE_SPEED_MULTIPLIERS. .get(state, 1.0) means "1.0 if not listed".
         - A following member speeds up when its leader does.
         - A leader moves no faster than its slowest member, and at half that
-          while calm and a member has fallen behind, so the group stays together."""
+          while calm and a member has fallen behind, so the group stays together.
+        - An exhausted player (no stamina left) can't sprint."""
         multiplier = STATE_SPEED_MULTIPLIERS.get(self.state, 1.0)
-        if self.alliance is None:
-            return self.speed * multiplier
-
-        leader = self.alliance.leader
-        if leader is not self:
-            if self.state == FOLLOWING:
-                multiplier = max(multiplier, STATE_SPEED_MULTIPLIERS.get(leader.state, 1.0))
-            return self.speed * multiplier
-
-        members = self.alliance.members
-        slowest = min(member.speed for member in members)
-        straggling = any(
-            distance(self.x, self.y, member.x, member.y) > FOLLOW_LEASH for member in members
-        )
-        if straggling and self.state not in (HUNTING, AVOIDING):
-            multiplier *= 0.5
-        return slowest * multiplier
+        speed = self.speed
+        if self.alliance is not None:
+            leader = self.alliance.leader
+            if leader is not self:
+                if self.state == FOLLOWING:
+                    multiplier = max(multiplier, STATE_SPEED_MULTIPLIERS.get(leader.state, 1.0))
+            else:
+                members = self.alliance.members
+                speed = min(member.speed for member in members)
+                straggling = any(
+                    distance(self.x, self.y, member.x, member.y) > FOLLOW_LEASH for member in members
+                )
+                if straggling and self.state not in (HUNTING, AVOIDING):
+                    multiplier *= 0.5
+        if self.stamina <= 0:
+            multiplier = min(multiplier, 1.0)  # exhausted: no sprinting
+        return speed * multiplier
 
     def move(self):
+        # Stamina: sprinting (moving in a fast state) uses it up, anything
+        # else slowly restores it
+        sprinting = self.target is not None and STATE_SPEED_MULTIPLIERS.get(self.state, 1.0) > 1
+        if sprinting:
+            self.stamina = max(0.0, self.stamina - 1 / (SPRINT_SECONDS * FPS))
+        else:
+            self.stamina = min(1.0, self.stamina + 1 / (STAMINA_RECOVERY_SECONDS * FPS))
+
         if self.state == RESTING:
             return  # resting players stand still
 
@@ -154,12 +171,12 @@ class Player:
         self.y += math.sin(self.heading) * step
 
         # Bounce off the arena walls by reflecting the heading
-        if self.x < PLAYER_RADIUS or self.x > SCREEN_WIDTH - PLAYER_RADIUS:
+        if self.x < PLAYER_RADIUS or self.x > WORLD_WIDTH - PLAYER_RADIUS:
             self.heading = math.pi - self.heading
-            self.x = max(PLAYER_RADIUS, min(self.x, SCREEN_WIDTH - PLAYER_RADIUS))
-        if self.y < PLAYER_RADIUS or self.y > SCREEN_HEIGHT - PLAYER_RADIUS:
+            self.x = max(PLAYER_RADIUS, min(self.x, WORLD_WIDTH - PLAYER_RADIUS))
+        if self.y < PLAYER_RADIUS or self.y > WORLD_HEIGHT - PLAYER_RADIUS:
             self.heading = -self.heading
-            self.y = max(PLAYER_RADIUS, min(self.y, SCREEN_HEIGHT - PLAYER_RADIUS))
+            self.y = max(PLAYER_RADIUS, min(self.y, WORLD_HEIGHT - PLAYER_RADIUS))
 
     def update_needs(self):
         """Lower every need by this player's decay rate (sleep recovers
@@ -188,13 +205,19 @@ class Player:
                 # min() stops the need going above the maximum
                 self.needs[need] = min(NEED_MAX, self.needs[need] + LOOT_RESTORE_AMOUNT)
 
-    def draw_vision(self, screen):
+    def draw_vision(self, screen, camera):
         """Debug view: outline of how far this player can see."""
-        pygame.draw.circle(
-            screen, VISION_CIRCLE_COLOR, (int(self.x), int(self.y)), VISION_RADIUS, 1
-        )
+        pygame.draw.circle(screen, VISION_CIRCLE_COLOR,
+                           camera.world_to_screen(self.x, self.y, screen),
+                           camera.size(VISION_RADIUS), 1)
 
-    def draw(self, screen, debug=False):
+    def draw(self, screen, camera, name_font, debug=False):
+        center = camera.world_to_screen(self.x, self.y, screen)
+        # Skip players outside the window (the extra 40 px keeps rings visible at the edge)
+        if not screen.get_rect().inflate(40, 40).collidepoint(center):
+            return
+        radius = camera.size(PLAYER_RADIUS, minimum=2)
+
         # Debug view: dot colored by state. Normal view: allies share a color.
         if debug:
             color = STATE_COLORS[self.state]
@@ -202,29 +225,33 @@ class Player:
             color = self.alliance.color
         else:
             color = PLAYER_COLOR
-        pygame.draw.circle(screen, color, (int(self.x), int(self.y)), PLAYER_RADIUS)
+        pygame.draw.circle(screen, color, center, radius)
         if self.alliance is not None and self.alliance.leader is self:
             # Ring = alliance leader (white normally, alliance color in debug view)
             ring_color = self.alliance.color if debug else LEADER_RING_COLOR
-            pygame.draw.circle(
-                screen, ring_color, (int(self.x), int(self.y)), PLAYER_RADIUS + 4, 1
-            )
+            pygame.draw.circle(screen, ring_color, center, radius + camera.size(4, 2), 1)
         if debug and self.inventory["weapon"] > 0:
             # Red outline = carrying a weapon
-            pygame.draw.circle(
-                screen, LOOT_COLORS["weapon"], (int(self.x), int(self.y)), PLAYER_RADIUS + 2, 1
-            )
-        self.draw_warnings(screen)
+            pygame.draw.circle(screen, LOOT_COLORS["weapon"], center, radius + camera.size(2, 1), 1)
+        self.draw_warnings(screen, camera, center, radius)
 
-    def draw_warnings(self, screen):
+        # The name, small, above the warning dots (hidden when zoomed far out)
+        if camera.zoom >= NAME_MIN_ZOOM:
+            if self.name_label is None:
+                self.name_label = name_font.render(self.name, True, NAME_TEXT_COLOR)
+            above_dots = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2) \
+                - camera.size(WARNING_DOT_RADIUS, 1) - 2
+            screen.blit(self.name_label, self.name_label.get_rect(midbottom=(center[0], above_dots)))
+
+    def draw_warnings(self, screen, camera, center, radius):
         """Draw a small colored dot above the player for each need below
         the warning threshold. Each need has a fixed slot (left, middle,
         right) so a given color always appears in the same place."""
-        dot_y = int(self.y - PLAYER_RADIUS - WARNING_DOT_OFFSET_Y)
+        dot_radius = camera.size(WARNING_DOT_RADIUS, 1)
+        spacing = camera.size(WARNING_DOT_SPACING, 3)
+        dot_y = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2)
         for slot, name in enumerate(self.needs):
             if self.needs[name] < NEED_WARNING_THRESHOLD:
-                # slot 0, 1, 2 -> offset -1, 0, +1 spacings from center
-                dot_x = int(self.x + (slot - 1) * WARNING_DOT_SPACING)
-                pygame.draw.circle(
-                    screen, NEED_WARNING_COLORS[name], (dot_x, dot_y), WARNING_DOT_RADIUS
-                )
+                # slot 0, 1, 2 -> offset -1, 0, +1 spacings from the center
+                dot_x = center[0] + (slot - 1) * spacing
+                pygame.draw.circle(screen, NEED_WARNING_COLORS[name], (dot_x, dot_y), dot_radius)

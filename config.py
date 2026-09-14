@@ -1,7 +1,11 @@
-# Window settings
-SCREEN_WIDTH = 900
+# Window settings (the window can also be resized while running)
+SCREEN_WIDTH = 1000
 SCREEN_HEIGHT = 700
 FPS = 60
+
+# World: the arena is much larger than the window; a camera shows part of it
+WORLD_WIDTH = 2400
+WORLD_HEIGHT = 1800
 
 # Colors (R, G, B)
 BACKGROUND_COLOR = (30, 30, 30)
@@ -10,12 +14,12 @@ PLAYER_COLOR = (220, 220, 220)
 # Player settings
 NUM_PLAYERS = 24
 PLAYER_RADIUS = 4           # size of the dot drawn on screen
-PLAYER_MIN_SPEED = 1.0      # pixels moved per frame, slowest player
-PLAYER_MAX_SPEED = 3.0      # pixels moved per frame, fastest player
+PLAYER_MIN_SPEED = 0.6      # pixels moved per frame, slowest player
+PLAYER_MAX_SPEED = 1.6      # pixels moved per frame, fastest player
 WANDER_TURN_RATE = 0.15     # max radians the heading can drift per frame
 
 # Starting formation
-START_CIRCLE_RADIUS = 150   # how spread out the starting circle is
+START_CIRCLE_RADIUS = 130   # distance of the launch plates from the cornucopia
 
 # Needs (hunger, thirst, sleep)
 NEED_MAX = 100              # every need starts full at this value
@@ -23,9 +27,9 @@ NEED_WARNING_THRESHOLD = 30 # warning dot appears below this value
 # Roughly how many seconds each need takes to drop from full to 0.
 # These are short on purpose so deaths are visible while testing.
 NEED_SECONDS_TO_EMPTY = {
-    "hunger": 65,
-    "thirst": 52,
-    "sleep": 78,
+    "hunger": 140,
+    "thirst": 115,
+    "sleep": 75,            # sleep runs out fastest, so players must rest regularly
 }
 NEED_RATE_VARIATION = 0.25  # each player's rate is up to 25% faster/slower
 
@@ -41,12 +45,16 @@ WARNING_DOT_OFFSET_Y = 4    # extra gap between player dot and warning dots
 
 # Loot
 LOOT_COUNTS = {             # how many of each item spawn at the start
-    "food": 30,
+    "food": 25,
     "water": 30,
     "weapon": 12,
 }
-LOOT_CENTER_FRACTION = 0.5  # share of each item type placed in the central cluster
-LOOT_CENTER_SPREAD = 35     # typical distance (pixels) of cluster items from the center
+LOOT_CENTER_FRACTION = {    # share of each item type piled at the cornucopia
+    "food": 0.3,
+    "water": 0.3,
+    "weapon": 0.8,          # most weapons are at the cornucopia: worth fighting for
+}
+LOOT_CENTER_SPREAD = 30     # typical distance (pixels) of cornucopia loot from the horn's mouth
 LOOT_SIZE = 4               # side length of the square drawn for an item
 LOOT_COLORS = {
     "food": (230, 140, 40),     # orange, same as the hunger warning
@@ -70,20 +78,22 @@ VISION_RADIUS = 80          # how far (pixels) a player can see
 STEER_TURN_RATE = 0.2       # max radians per frame when turning toward a target
 STEER_SNAP_DISTANCE = 30    # closer than this, face the target directly (prevents circling it)
 ARRIVE_DISTANCE = 10        # how close counts as "arrived" at a search point
-RUSH_DURATION = 6           # seconds aggressive players rush the center at the start
+RUSH_DURATION = 8           # seconds aggressive players rush the center at the start
+RUSH_BIAS = 0.25            # added to a balanced player's chance (its aggression) to rush the cornucopia
 FLEE_DURATION = 5           # max seconds cautious players run outward at the start
-FLEE_DISTANCE = 280         # how far from the center fleeing players aim for
+FLEE_DISTANCE = 600         # how far from the center fleeing players aim for
 FLEE_EDGE_MARGIN = 60       # flee points are kept at least this far from the walls
 SEEK_THRESHOLD = 40         # hunger/thirst below this, with nothing carried -> go find some
-REST_THRESHOLD = 35         # sleep below this -> rest
+REST_THRESHOLD = 50         # sleep below this -> rest
 REST_UNTIL = 90             # a resting player gets up once sleep reaches this
 REST_SECONDS_TO_FULL = 15   # seconds of rest to recover sleep from 0 to 100
 
 # Movement style
-EXPLORE_CELL_SIZE = 150     # the arena is split into cells this size; players explore unvisited ones
+EXPLORE_CELL_SIZE = 300     # the arena is split into cells this size; players explore unvisited ones
 EXPLORE_PAUSE_MIN = 0.5     # seconds a player pauses to look around on reaching a point
 EXPLORE_PAUSE_MAX = 2.0
 SHELTER_WALL_MARGIN = 40    # tired players walk to a spot this far from the nearest wall to sleep
+SHELTER_MAX_DISTANCE = 300  # ...but walk at most this far toward it before lying down
 # Speed multiplier per state (any state not listed moves at 1.0). Urgent
 # states are faster, so chases and escapes stand out from calm movement.
 STATE_SPEED_MULTIPLIERS = {
@@ -93,6 +103,7 @@ STATE_SPEED_MULTIPLIERS = {
     "FLEE_OUTWARD": 1.3,
     "SEEKING": 1.2,
     "TRACKING": 1.2,
+    "INVESTIGATING": 1.2,
 }
 CHASE_LINE_COLOR = (130, 45, 45)  # faint line from a hunter to its prey
 
@@ -127,11 +138,82 @@ ALLIANCE_WILLINGNESS = {    # fixed willingness to ally (0-1); balanced players 
 }
 
 # Endgame
-SHOWDOWN_PLAYERS = 4        # with this many players left, everyone hunts everyone to the death
+SHOWDOWN_PLAYERS = 6        # with this many players left, the finale begins: all head to the cornucopia to fight to the death
+FINALE_RADIUS = 250         # in the finale, players attack anyone this close to the cornucopia
 
 # Simulation speed (Up/Down keys)
 SPEED_LEVELS = [0.25, 0.5, 1, 2, 4, 8]  # simulation steps per drawn frame
 HUD_TEXT_COLOR = (200, 200, 200)
+
+# Cornucopia and the start
+COUNTDOWN_SECONDS = 3       # players wait on their launch plates this long
+BLOODBATH_RADIUS = 80       # rushers start fighting (or backing off) this close to the cornucopia
+CORNUCOPIA_SIZE = 70        # size of the golden horn (world pixels)
+CORNUCOPIA_COLOR = (205, 165, 70)
+CORNUCOPIA_OUTLINE_COLOR = (110, 80, 25)
+PLATE_RADIUS = 7
+PLATE_COLOR = (72, 72, 72)
+COUNTDOWN_TEXT_COLOR = (255, 230, 150)
+
+# Camera
+CAMERA_MAX_ZOOM = 3.0       # most zoomed in (screen pixels per world pixel)
+CAMERA_OPENING_ZOOM = 2.2   # zoom on the cornucopia during the start
+CAMERA_CHASE_ZOOM = 1.6     # most zoomed in when the automatic camera frames a chase or the players
+CAMERA_SMOOTHING = 0.08     # how quickly the automatic camera glides (share of the gap per frame)
+CAMERA_PAN_SPEED = 12       # screen pixels per frame when panning with W/A/S/D
+CAMERA_ZOOM_STEP = 1.15     # zoom factor per mouse wheel notch
+
+# Minimap (bottom-right corner)
+MINIMAP_WIDTH = 200
+MINIMAP_BACKGROUND = (20, 26, 20)
+MINIMAP_BORDER = (160, 160, 160)
+
+# Terrain: large colored areas (only visual for now: players walk through them)
+TERRAIN_COLORS = {
+    "meadow": (62, 84, 48),
+    "forest": (34, 62, 38),
+    "rock": (84, 82, 76),
+    "sand": (128, 114, 76),
+    "marsh": (48, 70, 68),
+}
+TERRAIN_WEIGHTS = {         # how common each terrain type is
+    "meadow": 3,
+    "forest": 3,
+    "rock": 1.5,
+    "sand": 1,
+    "marsh": 1.5,
+}
+TERRAIN_ZONES = 16          # number of terrain areas
+TERRAIN_CELL = 10           # terrain is worked out in blocks this size, then smoothed
+TERRAIN_CLEAR_RADIUS = 260  # a meadow clearing surrounds the cornucopia
+OUTSIDE_COLOR = (12, 12, 12)   # beyond the arena border
+BORDER_COLOR = (95, 95, 85)
+
+# Names
+DEFAULT_NAMES = [           # in player order: District 1 boy, District 1 girl, District 2 boy, ...
+    "D1 Boy", "Glimmer",    # Tributes named in the first book keep their names;
+    "Cato", "Clove",        # the others are unnamed there and get a district label.
+    "D3 Boy", "D3 Girl",
+    "D4 Boy", "D4 Girl",
+    "D5 Boy", "Foxface",
+    "D6 Boy", "D6 Girl",
+    "D7 Boy", "D7 Girl",
+    "D8 Boy", "D8 Girl",
+    "D9 Boy", "D9 Girl",
+    "D10 Boy", "D10 Girl",
+    "Thresh", "Rue",
+    "Peeta", "Katniss",
+]
+NAME_MAX_LENGTH = 14
+NAME_MIN_ZOOM = 0.7         # names above heads are hidden when zoomed out further than this
+NAME_TEXT_COLOR = (235, 235, 235)
+
+# Start screen
+START_BACKGROUND = (22, 26, 22)
+START_TITLE_COLOR = (235, 200, 110)
+START_FIELD_COLOR = (48, 54, 46)
+START_FIELD_ACTIVE_COLOR = (92, 102, 76)
+START_BUTTON_COLOR = (190, 150, 60)
 
 # Debug view (toggle with the D key)
 VISION_CIRCLE_COLOR = (55, 55, 55)
@@ -143,17 +225,27 @@ STRENGTH_MAX = 10           # strongest possible player
 WEAPON_STRENGTH_BONUS = 5   # added to strength while carrying a weapon
 COMBAT_RANGE = 10           # a hunter this close to its prey starts a fight
 STALK_DISTANCE = 20         # hunters wait this far from prey that can't be attacked yet
+FIGHT_DURATION_MIN = 1.0    # a fight lasts between these many seconds; the two
+FIGHT_DURATION_MAX = 3.0    # fighters stand still until it is decided
+FIGHT_RING_COLOR = (255, 110, 60)  # pulsing ring around a fight in progress
+FIGHT_ALERT_RADIUS = 350    # players this close hear a fight start
+ALERT_SECONDS = 8           # how long a player remembers where it heard a fight
+
+# Stamina: sprinting (hunting, avoiding, ...) tires players out
+SPRINT_SECONDS = 4          # full stamina lasts this long while sprinting; then no more sprinting
+STAMINA_RECOVERY_SECONDS = 8  # time to recover from empty to full while not sprinting
+TIRED_ESCAPE_FACTOR = 0.3   # an exhausted loser's escape chance is multiplied by this
 OUTCOME_WEIGHTS = {         # relative chance of each kind of fight outcome
-    "ELIMINATION": 0.75,    # loser is eliminated, unless it escapes (then drops items)
-    "STANDOFF": 0.1,        # nobody hurt, both back off
-    "MUTUAL_LOSS": 0.15,    # both drop an item and back off
+    "ELIMINATION": 0.85,    # loser is eliminated, unless it escapes (then drops items)
+    "STANDOFF": 0.05,       # nobody hurt, both back off
+    "MUTUAL_LOSS": 0.10,    # both drop an item and back off
 }
 ESCAPE_DROP_FRACTION = 0.5  # share of each item type an escaping loser drops
 RETREAT_SECONDS = 3         # after a fight both survive, they back off (and can't fight) this long
 RETREAT_DISTANCE = 150      # how far away a retreating/avoiding player aims
 ITEM_DROP_SCATTER = 15      # dropped items land up to this many pixels away
 
-ESCAPE_BONUS = 0.05         # added to a loser's escape chance (raise if fights are too deadly)
+ESCAPE_BONUS = -0.15        # added to a loser's escape chance (raise if fights are too deadly)
 ESCAPE_MAX = 0.9            # escape chance never goes above this
 
 # Hunting and avoiding
@@ -161,7 +253,7 @@ ESCAPE_MAX = 0.9            # escape chance never goes above this
 # The chance to fight equals its aggression (0-1), multiplied by
 # WEAPON_FEAR_FACTOR if the other player is armed and it is not.
 WEAPON_FEAR_FACTOR = 0.5
-HUNT_GIVE_UP_SECONDS = 10   # a hunter gives up a chase after this long
+HUNT_GIVE_UP_SECONDS = 6    # a hunter gives up a chase after this long
 HUNT_COOLDOWN_SECONDS = 5   # after giving up (or a fight), no hunting for this long
 
 # Alliances
@@ -174,10 +266,10 @@ FOLLOW_SPREAD = 16          # members stay within about this distance of their l
 FOLLOW_LEASH = 45           # members collect loot at most this far from their leader
 BETRAYAL_CHANCE_PER_MINUTE = 0.3  # for a member with aggression 1 (scaled by aggression)
 ALLIANCE_AGGRESSION_BONUS = 0.2   # added to a group's chance to fight for each extra member
-ALLIANCE_SENSE_RADIUS = 150 # alliance members notice non-allies this far away (loners: VISION_RADIUS)
+ALLIANCE_SENSE_RADIUS = 120 # alliance members notice non-allies this far away (loners: VISION_RADIUS)
 ALLIANCE_RETREAT_SECONDS = 1  # alliances back off only this long after a fight (loners: RETREAT_SECONDS)
 # Tracking: an aggressive alliance heads roughly toward players it can't see yet
-TRACK_RADIUS = 350          # how far away such players can be
+TRACK_RADIUS = 400          # how far away such players can be
 TRACK_MIN_FIGHT_CHANCE = 0.6  # only groups at least this likely to fight go tracking
 TRACK_STEP = 120            # each estimated waypoint lies this far ahead
 TRACK_ANGLE_NOISE = 0.5     # max error (radians) in the estimated direction

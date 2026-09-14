@@ -83,9 +83,9 @@ class Alliance:
         """The strongest member leads."""
         self.leader = max(self.members, key=lambda member: member.fighting_strength())
 
-    def ids(self):
-        """Member ids as text, e.g. "3, 7, 12"."""
-        return ", ".join(str(member.id) for member in self.members)
+    def names(self):
+        """Member names as text, e.g. "Cato, Clove, Glimmer"."""
+        return ", ".join(member.name for member in self.members)
 
 
 def try_to_ally(player, other):
@@ -104,12 +104,11 @@ def try_to_ally(player, other):
     if group is not None and len(group.members) >= ALLIANCE_MAX_SIZE:
         return False
 
-    # Each side's willingness is 1 - aggression; an alliance answers
-    # through its leader
     # Remember that this pair has now had its chance (whatever the outcome)
     player.alliance_rolls.add(other)
     other.alliance_rolls.add(player)
 
+    # An alliance answers through its leader
     other_side = other.alliance.leader if other.alliance else other
     chance = ALLIANCE_CHANCE * willingness(player) * willingness(other_side)
     if random.random() >= chance:
@@ -117,13 +116,13 @@ def try_to_ally(player, other):
 
     if group is None:
         alliance = Alliance(player, other)
-        events.log(f"{alliance.style.capitalize()} alliance formed: Players {alliance.ids()} "
-              f"(leader: Player {alliance.leader.id}).")
+        events.log(f"{alliance.style.capitalize()} alliance formed: {alliance.names()} "
+                   f"(leader: {alliance.leader.name}).")
     else:
         newcomer = other if group is player.alliance else player
         group.add(newcomer)
-        events.log(f"Player {newcomer.id} joined the alliance led by Player "
-              f"{group.leader.id} (members: {group.ids()}).")
+        events.log(f"{newcomer.name} joined the alliance led by {group.leader.name} "
+                   f"({group.names()}).")
     return True
 
 
@@ -145,7 +144,8 @@ def share_supplies(players):
 
 
 def disband(alliance, reason):
-    events.log(f"The alliance of Players {alliance.ids()} broke up ({reason}).")
+    if alliance.members:
+        events.log(f"The alliance of {alliance.names()} broke up ({reason}).")
     for member in list(alliance.members):  # copy: remove() changes the list
         alliance.remove(member)
 
@@ -159,21 +159,21 @@ def betray(player):
     player.prey = victim
     player.prey_last_seen = (victim.x, victim.y)
     player.hunt_timer = 0
-    events.log(f"Player {player.id} betrayed the alliance and turned on Player {victim.id}!")
+    events.log(f"{player.name} betrayed the alliance and turned on {victim.name}!")
 
     if len(alliance.members) < 2:
         disband(alliance, "betrayal")
     elif alliance.leader is player:
         alliance.choose_new_leader()
-        events.log(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
+        events.log(f"{alliance.leader.name} now leads the alliance ({alliance.names()}).")
 
 
 def update_alliances(players):
     """Call once per frame, after dead players have been removed."""
-    # Showdown: with only a few players left, every alliance breaks up
+    # Finale: with only a few players left, every alliance breaks up
     if len(players) <= SHOWDOWN_PLAYERS:
         for alliance in {player.alliance for player in players if player.alliance is not None}:
-            disband(alliance, "the showdown has begun")
+            disband(alliance, "the finale has begun")
         return
 
     # Tidy up alliances that lost members. {... for ...} is a set
@@ -184,7 +184,7 @@ def update_alliances(players):
             disband(alliance, "too few members left")
         elif not alliance.leader.alive:
             alliance.choose_new_leader()
-            events.log(f"Player {alliance.leader.id} now leads the alliance ({alliance.ids()}).")
+            events.log(f"{alliance.leader.name} now leads the alliance ({alliance.names()}).")
 
     # Betrayal: a small chance every frame, higher for aggressive members
     for player in players:

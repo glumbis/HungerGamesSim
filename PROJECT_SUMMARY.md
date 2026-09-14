@@ -54,7 +54,7 @@ the next step onward.)
   (since replaced by `EXPLORING`, see below).
   Players see 80 px (originally 120) and remember loot they have seen; they only learn an
   item is gone when they see its spot again. Steering turns at most
-  0.2 rad/frame and faces the target directly within 30 px. Press **D** for
+  0.2 rad/frame and faces the target directly within 30 px. Press **D** (now **Tab**) for
   the debug view (vision circles, state-colored dots, legend).
   Loot layout: half of each type in a tight central cluster, the rest
   spread evenly via a jittered grid. Player and loot size reduced to 4 px
@@ -161,13 +161,44 @@ the next step onward.)
   explore at a median 52–68 px from the nearest wall vs 114–188 px for
   others.
 
+- **Large arena, camera and cornucopia start** — world 2400×1800 (window
+  1000×700, resizable). `camera.py`: automatic mode (cornucopia during the
+  opening, then follows a chase framing hunter and prey, otherwise fits all
+  living players) and manual control (mouse wheel zoom, left-drag,
+  W/A/S/D, F = automatic, C = whole map); minimap bottom-right. Debug view
+  moved from D to **Tab**. Opening: 3-second countdown on 24 launch plates
+  around a golden cornucopia; 80% of weapons and 30% of food/water piled at
+  its mouth; balanced players rush with chance aggression + 0.25; rushers
+  grab weapons first; armed rushers (and killers once at the horn) attack
+  the nearest player within 80 px; unarmed rushers flee only when hunted.
+  The feed announces the start and the end of the bloodbath.
+- **Slower, deadlier pace, names and simpler terrain** — speeds
+  0.6–1.6 px/frame; needs hunger 140 s / thirst 115 s / sleep 75 s; rest
+  below 50 sleep; shelter walk at most 300 px; loot 25 food / 30 water /
+  12 weapons. Fights last 1–3 s (`combat.Fight`: both fighters locked in
+  place, pulsing ring); outcome weights 85/5/10; escape bonus −0.15, and
+  escape chance × (0.3 + 0.7 × stamina). A fight alerts players within
+  350 px for 8 s: fight chance ≥ 0.5 → `INVESTIGATING`, otherwise move
+  away. Stamina: sprinting empties it in 4 s, it recovers in 8 s; hunters
+  give up after 6 s. Finale at ≤ 6 players (`SHOWDOWN_PLAYERS`): alliances
+  disband, everyone is `CONVERGING` on the cornucopia, attacks anyone in
+  vision or within 250 px of the horn, and fights are to the death.
+  Terrain: 16 zones (meadow/forest/rock/sand/marsh), each spot taking the
+  type of its nearest zone center, worked out on a 10 px grid and smoothed;
+  visual only. `start_screen.py`: edit the 24 names by district; defaults
+  use the tributes named in book 1 (Glimmer, Cato, Clove, Foxface, Thresh,
+  Rue, Peeta, Katniss) and labels like "D3 Boy" for the rest. Names are
+  drawn above heads (zoom ≥ 0.7) and used in the feed and terminal.
+  Measured over 5 seeds: games end at 2:41–3:35, finale at 2:24–3:15,
+  27–33 fights per game, 1–6 deaths from needs, longest chase ≤ 8.2 s.
+
 Nothing beyond this (post-run summary) is implemented yet.
 
 **Tuning to revisit later** — player speeds (1–3 px/frame) and need
 durations are deliberately fast so test runs are short. Speed control now
 exists (Space / Up / Down), so these can be lowered for viewing without
-slowing down testing. Needs were made ~13% faster on request; games
-currently end at about 1:30–1:50. Combat currently causes 19–23 of 24
+slowing down testing. Needs have since been retuned (hunger 140 s,
+thirst 115 s, sleep 75 s); games currently end at about 2:40–3:35. Combat currently causes 19–23 of 24
 deaths (5 test seeds, escape bonus 0.05, with traits) — about the level once judged to
 be too many fights. `ESCAPE_BONUS`, `OUTCOME_WEIGHTS` and
 `ALLIANCE_RETREAT_SECONDS` in `config.py` are the main levers.
@@ -182,11 +213,13 @@ still empty:
 | `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
 | `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Alliance fields (`alliance`, `former_allies`, `follow_offset`, `visible_loot`, `visible_players`), `fighting_strength()`, `current_speed()`, traits (`temperament`, `roaming`), exploring/tracking fields. |
 | `main.py` | Implemented | Entry point: `create_starting_players()` (circle formation), `Simulation` class (`step()` advances the world one tick), drawing (`draw()`, legend, HUD), and the main loop with pause/speed keys. |
-| `arena.py` | Implemented (partial) | `LootItem` and `Arena`: loot spawning, pickup, drawing. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
+| `arena.py` | Implemented (partial) | `LootItem` and `Arena`: terrain background, cornucopia and launch plates, loot spawning/pickup, fights in progress and fight markers, drawing through the camera. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
 | `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
 | `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
 | `alliances.py` | Implemented | `Alliance` class (members, leader, color), forming/joining, supply sharing, betrayal, breakups. |
 | `events.py` | Implemented | Event feed: `log()` prints and stores timestamped events, `update()` expires them, `draw()` shows them bottom-left. |
+| `camera.py` | Implemented | `Camera`: world↔screen conversion, zoom limits, manual control (wheel, drag, WASD, F, C), automatic focus (opening, chases, all players). |
+| `start_screen.py` | Implemented | Start screen for editing the 24 tribute names before the Games. |
 | `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
 
 ## Design decisions established so far
@@ -277,24 +310,22 @@ that pattern should continue.
 
 ## Requested changes for next session
 
-Feedback on the traits / showdown / speed control version (not yet
-implemented):
+Feedback on the slower pace / names / terrain version (in progress):
 
-1. **Make the arena feel bigger** — it currently feels like a football
-   field rather than a large Hunger Games arena. (Ideas to evaluate, not
-   yet agreed: a world larger than the window with a camera or zoom;
-   smaller sprites and slower movement relative to the map; terrain or
-   landmarks that give a sense of scale.)
-2. **A clearer, more dramatic start** — the opening should resemble the
-   Hunger Games: a clearly visible cornucopia in the center with a chaotic
-   bloodbath around it, while others scatter. Currently some players
-   scatter and some go to the middle, but it does not read as a
-   cornucopia.
+1. **High-resolution map.**
+2. **Biomes that do something** — terrain should affect gameplay. Specific
+   effects are to be agreed with the user before implementing.
+3. **Follow camera stays on fights** — while a fight is going on, the
+   automatic camera stays zoomed in on it.
+4. **More purposeful movement** — players keep heading in one direction
+   for longer instead of changing course often.
+5. **Bigger-feeling map and slower game** — without making games last
+   too long.
+6. **Lull alerts** — after a long period with nothing happening, aggressive
+   players learn where other players are and can hunt them down.
 
-Previous rounds are implemented — endgame showdown, speed control, faster
-needs and fixed personality traits (see "Personality traits, alliance
-styles, showdown, speed control" under Current status), and before that
-the alliance tuning, tracking and event feed.
+Previous rounds are implemented (see Current status), most recently the
+slower pace, timed fights, finale, terrain areas and the start screen.
 
 ## Working style
 
