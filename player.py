@@ -47,6 +47,11 @@ class Player:
         self.ambush_spot = None     # where it lies in wait
         self.nemesis = None         # the player who killed its district partner (revenge target)
         self.days_survived = 0      # nights lived through (for awards)
+        self.gifts = 0              # sponsor gifts received (for awards)
+        self.betrayals = 0          # times it betrayed an alliance (for awards)
+        self.revenge_victim = False # True if it was killed by the tribute seeking revenge on it
+        self.sleep_lock = 0         # frames it must stay asleep (see ai.decide)
+        self.training_score = 0     # 1-12, given before the Games (see main.training_score)
         self.name_label = None      # the name and district rendered as an image, made the first time it is drawn
         self.x = x
         self.y = y

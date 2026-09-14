@@ -5,6 +5,8 @@ import math
 import random
 
 import alliances
+import events
+import narration
 from config import (
     FPS, WORLD_WIDTH, WORLD_HEIGHT,
     VISION_RADIUS, ARRIVE_DISTANCE, RUSH_DURATION, FLEE_DURATION,
@@ -21,10 +23,11 @@ from config import (
     EXPLORE_MIN_TRIP, EXPLORER_MIN_TRIP, TIP_SECONDS, INVESTIGATE_MIN_FIGHT_CHANCE,
     SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
     BLOODBATH_JOIN_CHANCE, CAMP_ALLIANCE_SIZE, CAMP_RADIUS, CENTER_PULL,
-    LULL_GATHER_SHARE, GATHER_RADIUS, LULL_FIGHT_BONUS,
-    ALLIANCE_ASSIST_RADIUS, NIGHT_VISION_FACTOR, NIGHT_SLEEP_THRESHOLD,NIGHT_HUNT_MIN_FIGHT_CHANCE, NEED_MAX,HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE,
+    LULL_GATHER_SHARE, GATHER_RADIUS, LULL_FIGHT_BONUS, ALLIANCE_ASSIST_RADIUS,
+    NIGHT_VISION_FACTOR, NIGHT_SLEEP_THRESHOLD, NIGHT_HUNT_MIN_FIGHT_CHANCE, MIN_SLEEP_SECONDS,
+    HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE, HIDE_MAX_AGGRESSION,
+    AMBUSH_CHANCE, AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
     STEALTH_VISIBILITY, TRACKING_FACTOR, CHILL_CHANCE, CHILL_SECONDS, CHILL_START_PER_SECOND,
-    HIDE_MAX_AGGRESSION, AMBUSH_CHANCE,AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
 )
 from utils import distance, angle_to
 
@@ -88,6 +91,8 @@ def set_state(player, state):
     """Change state and restart the state timer — but only if the state
     actually changes, so the timer keeps counting otherwise."""
     if player.state != state:
+        if state == RESTING:
+            player.sleep_lock = int(MIN_SLEEP_SECONDS * FPS)  # just fell asleep: stays asleep a while
         player.state = state
         player.state_timer = 0
 
@@ -717,7 +722,7 @@ def try_to_hide(player):
         for other in player.visible_players:
             if other.prey is player:
                 stop_hunting(other, cooldown=True)  # lost sight of it in the branches
-        events_log(narration_pick("HIDE", name=player.name))
+        events.log(narration.pick(narration.HIDE, name=player.name), "fight")
         set_state(player, "HIDING")
         player.target = None
         return True
@@ -728,7 +733,6 @@ def ambush(player, arena):
     """An idle killer on its own (District 3 more often) may lie in wait next to
     marsh or loot, holding still until someone walks by. Returns True if waiting."""
     if player.ambush_timer > 0:
-        player.ambush_timer -= 1
         if distance(player.x, player.y, *player.ambush_spot) > ARRIVE_DISTANCE:
             set_state(player, TRACKING)
             player.target = player.ambush_spot
@@ -750,7 +754,7 @@ def ambush(player, arena):
         spot, place = (item.x + 15, item.y + 15), "supplies"
     player.ambush_spot = clamp_to_arena(*spot, ARRIVE_DISTANCE)
     player.ambush_timer = AMBUSH_SECONDS * FPS
-    events_log(narration_pick("AMBUSH_SET", name=player.name, spot=place))
+    events.log(narration.pick(narration.AMBUSH_SET, name=player.name, spot=place), "fight")
     return True
 
 
@@ -768,17 +772,6 @@ def seek_revenge(player, players):
     set_state(player, TRACKING)
     player.target = (nemesis.x, nemesis.y)
     return True
-
-
-def events_log(text):
-    """Log an event from here (imported late to avoid a circular import)."""
-    import events
-    events.log(text)
-
-
-def narration_pick(list_name, **names):
-    import narration
-    return narration.pick(getattr(narration, list_name), **names)
 
 
 def assist_allies(player):
@@ -895,12 +888,24 @@ def decide(player, arena, players):
         player.hunt_cooldown -= 1
     if player.heard_timer > 0:
         player.heard_timer -= 1
+    if player.ambush_timer > 0:
+        player.ambush_timer -= 1  # an ambush is given up after AMBUSH_SECONDS, whatever happens
 
     # 0. Locked in a fight: stand still until combat.py decides it
     if player.fight is not None:
         set_state(player, FIGHTING)
         player.target = None
         return
+
+    # 0-. Asleep: once a tribute falls asleep it stays asleep for a while
+    #     (MIN_SLEEP_SECONDS), so it doesn't flicker awake and asleep. Only a
+    #     fight (step 0 above) or a Gamemaker danger wakes it early.
+    if player.state == RESTING and player.sleep_lock > 0:
+        player.sleep_lock -= 1
+        if dangers is None or dangers.escape_point(player) is None:
+            player.target = None
+            return
+        player.sleep_lock = 0
 
     # 0a. Too tired to go on: collapse and sleep right here until rested,
     #     whatever else is going on (so nobody dies of lack of sleep while

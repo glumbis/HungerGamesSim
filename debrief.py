@@ -78,12 +78,12 @@ def awards(sim):
     if peaceful:
         best = min(peaceful, key=lambda player: player.placement or 99)  # lowest place = lasted longest
         result.append(("Survivor without a kill", f"{best.name} (place {best.placement})"))
-    gifted = max(everyone, key=lambda player: getattr(player, "gifts", 0))
-    if getattr(gifted, "gifts", 0) > 0:
+    gifted = max(everyone, key=lambda player: player.gifts)
+    if gifted.gifts > 0:
         gift_word = "gift" if gifted.gifts == 1 else "gifts"
         result.append(("Sponsors' favorite", f"{gifted.name} ({gifted.gifts} {gift_word})"))
-    traitor = max(everyone, key=lambda player: getattr(player, "betrayals", 0))
-    if getattr(traitor, "betrayals", 0) > 0:
+    traitor = max(everyone, key=lambda player: player.betrayals)
+    if traitor.betrayals > 0:
         result.append(("Biggest traitor", traitor.name))
     if alliances.records:
         name, size = max(alliances.records.items(), key=lambda item: item[1])

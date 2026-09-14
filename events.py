@@ -7,7 +7,7 @@ import pygame
 from config import (
     FPS,
     FEED_MAX_LINES, FEED_SECONDS, FEED_LINE_HEIGHT, FEED_TEXT_COLOR, FEED_SHADOW_COLOR,
-    EVENT_COLORS, OPENING_DEATH_MARK_SECONDS,
+    EVENT_COLORS, OPENING_DEATH_MARK_SECONDS, ALLIANCE_RING_SECONDS, TOAST_SECONDS,
 )
 
 entries = []     # events on screen, oldest first; each is [text, frames_left]
@@ -17,16 +17,20 @@ counts = Counter()  # how often some things happened, e.g. counts["betrayals"] (
 history_kinds = []  # the kind of each event in `history` (same order)
 markers = []        # short-lived symbols in the arena, each [x, y, kind, frames_left] ("heart", "broken", "death")
 opening = True      # True during the countdown and bloodbath (set by main.Simulation)
+rings = []          # flashing circles where alliances formed, each [x, y, color, frames_left]
+toast = None        # a short headline shown in the top middle, [text, frames_left] (when a tribute falls)
 
 
 def reset():
     """Forget everything, ready for a new game."""
-    global frame_count, opening  # see update() for what `global` does
+    global frame_count, opening, toast  # see update() for what `global` does
     opening = True
+    toast = None
     entries.clear()
     history.clear()
     history_kinds.clear()
     markers.clear()
+    rings.clear()
     counts.clear()
     frame_count = 0
 
@@ -47,14 +51,45 @@ def update():
     """Advance the clock by one frame and drop events whose time is up."""
     # `global` lets this function change the module-level variable
     # instead of creating a new local one
-    global frame_count
+    global frame_count, toast
     frame_count += 1
+    if toast is not None:
+        toast[1] -= 1
+        if toast[1] <= 0:
+            toast = None
     for entry in entries:
         entry[1] -= 1
     entries[:] = [entry for entry in entries if entry[1] > 0]  # [:] replaces the contents in place
     for marker in markers:
         marker[3] -= 1
     markers[:] = [marker for marker in markers if marker[3] > 0]
+    for ring in rings:
+        ring[3] -= 1
+    rings[:] = [ring for ring in rings if ring[3] > 0]
+
+
+def show_toast(text):
+    """Show a short headline in the top middle of the screen for a moment."""
+    global toast
+    toast = [text, int(TOAST_SECONDS * FPS)]
+
+
+def draw_toast(screen, font):
+    if toast is None:
+        return
+    text, frames_left = toast
+    alpha = 255 if frames_left > FPS / 2 else int(255 * frames_left / (FPS / 2))  # fade out at the end
+    label = font.render(text, True, (240, 235, 225))
+    box = pygame.Surface((label.get_width() + 28, label.get_height() + 10), pygame.SRCALPHA)
+    pygame.draw.rect(box, (12, 14, 18, 190), box.get_rect(), border_radius=8)
+    box.blit(label, (14, 5))
+    box.set_alpha(alpha)
+    screen.blit(box, box.get_rect(center=(screen.get_width() // 2, 34)))
+
+
+def add_ring(x, y, color):
+    """Flash a circle in an alliance's color where it formed or grew."""
+    rings.append([x, y, color, int(ALLIANCE_RING_SECONDS * FPS)])
 
 
 def add_marker(x, y, kind, seconds):

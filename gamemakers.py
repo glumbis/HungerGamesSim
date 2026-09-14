@@ -19,8 +19,7 @@ from config import (
     MUTT_COUNT, MUTT_SECONDS, MUTT_SPEED, MUTT_KILL_CHANCE, MUTT_COLOR,
     SHRINK_START_PLAYERS, SHRINK_MIN_RADIUS, SHRINK_SECONDS, SHRINK_COLOR,
     FEAST_PLAYERS, FEAST_ITEMS, FEAST_DELAY_SECONDS, SHOWDOWN_PLAYERS,
-    INJURY_SECONDS, DEATH_MARK_COLOR, HEART_COLOR, LOOT_CENTER_SPREAD,
-    NEED_MAX, CARRY_LIMITS,
+    INJURY_SECONDS, DEATH_MARK_COLOR, ALLIANCE_RING_RADIUS,
 )
 from utils import distance, angle_to
 
@@ -146,6 +145,7 @@ class Gamemakers:
         # Sponsors favor tributes who put on a show: kills, big alliances, District 1's charm
         def appeal(player):
             score = 1 + player.kills + (len(player.alliance.members) / 2 if player.alliance else 0)
+            score *= 0.5 + player.training_score / 12  # a high training score impressed them
             return score * (2 if player.skill == "luxury" else 1)
 
         candidates = [player for player in players if self.wanted_gift(player)]
@@ -155,7 +155,7 @@ class Gamemakers:
         kind = self.wanted_gift(receiver)
         self.parachutes.append([receiver, kind, int(PARACHUTE_FALL_SECONDS * FPS)])
         events.counts["sponsor gifts"] += 1
-        receiver.gifts = getattr(receiver, "gifts", 0) + 1
+        receiver.gifts += 1
         events.log(narration.pick(narration.SPONSOR_GIFT, name=receiver.name,
                                   item=ITEM_NAMES[kind]), "sponsor")
 
@@ -309,6 +309,12 @@ class Gamemakers:
             pygame.draw.line(screen, PARACHUTE_COLOR, (x - size, y), (x, y + size), 1)
             pygame.draw.line(screen, PARACHUTE_COLOR, (x + size, y), (x, y + size), 1)
 
+        for x, y, color, frames_left in events.rings:
+            # A big circle that blinks on and off a few times, then disappears
+            if (frames_left // 6) % 2 == 0:
+                pygame.draw.circle(screen, color, camera.world_to_screen(x, y, screen),
+                                   camera.size(ALLIANCE_RING_RADIUS, 14), 2)
+
         for x, y, kind, _ in events.markers:
             point = camera.world_to_screen(x, y, screen)
             size = camera.size(3, 2)
@@ -328,4 +334,4 @@ class Gamemakers:
         for i, line in enumerate(lines):
             label = font.render(line, True, (240, 230, 200) if i == 0 else (220, 220, 230))
             label.set_alpha(alpha)
-            screen.blit(label, label.get_rect(center=(screen.get_width() // 2, 70 + i * 20)))
+            screen.blit(label, label.get_rect(center=(screen.get_width() // 2, 80 + i * 20)))

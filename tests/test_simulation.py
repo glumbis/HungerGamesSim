@@ -76,10 +76,30 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual([p.placement for p in first.all_players],
                          [p.placement for p in second.all_players])
 
+    def test_sleep_lasts_a_while(self):
+        """Once asleep, a tribute stays asleep for MIN_SLEEP_SECONDS, unless a
+        fight or a danger (it then runs: AVOIDING) wakes it, or it dies."""
+        import ai
+        fell_asleep = {}  # player -> step it fell asleep
+        steps = [0]
+
+        def check(sim):
+            steps[0] += 1
+            for player in sim.all_players:
+                if player.state == ai.RESTING:
+                    fell_asleep.setdefault(player, steps[0])
+                elif player in fell_asleep:
+                    slept = steps[0] - fell_asleep.pop(player)
+                    if slept < config.MIN_SLEEP_SECONDS * config.FPS:
+                        self.assertTrue(player.state in (ai.FIGHTING, ai.AVOIDING) or not player.alive,
+                                        f"{player.name} woke after {slept} steps to {player.state}")
+        play_headless(7, check)
+
     def test_every_narration_line_fills_in(self):
         names = dict(killer="K", victim="V", n=3, names="A and B", leader="L", others="B", newcomer="N",
                      traitor="T", loser="Lo", winner="W", a="A", b="B", kills=2, alliance="the Pack",
-                     name="X", item="bread", area="northern forest", spot="water", day=2)
+                     name="X", item="bread", area="northern forest", spot="water", day=2,
+                     best="B", best_score=11, worst="W", worst_score=3)
         for value in vars(narration).values():
             groups = value.values() if isinstance(value, dict) else [value]
             for group in groups:

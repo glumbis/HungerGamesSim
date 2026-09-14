@@ -5,14 +5,14 @@ from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, FPS, WORLD_WIDTH, WORLD_HEIGHT, LONERS_PER_GAME,
     BLOODBATH_END_QUIET_SECONDS,
     NUM_PLAYERS, PLAYER_COLOR, LEGEND_TEXT_COLOR, CHASE_LINE_COLOR,
-    SHOWDOWN_PLAYERS, SPEED_LEVELS, HUD_TEXT_COLOR, RUSH_DURATION,
+    SHOWDOWN_PLAYERS, SPEED_LEVELS, RUSH_DURATION,
     COUNTDOWN_SECONDS, COUNTDOWN_TEXT_COLOR, CORNUCOPIA_COLOR, CAMERA_OPENING_ZOOM,
     MINIMAP_WIDTH, MINIMAP_BORDER, LULL_SECONDS, TERRAIN_COLORS, WIN_BANNER_SECONDS,
-    DEATH_MARK_SECONDS, PANEL_COLOR, PANEL_BORDER, SELECT_RING_COLOR, SKILL_DESCRIPTIONS,
+    DEATH_MARK_SECONDS, SELECT_RING_COLOR, SKILL_DESCRIPTIONS,
     NEED_WARNING_COLORS, FIRE_COLOR, CARD_WIDTH,
     AGGRESSION_RANGES, BIG_ALLIANCE_SIZE, LEAVE_DISTANCE, TIP_SECONDS, PROFICIENCY_DESCRIPTIONS,
+    WEAPON_TYPES, TRIBUTE_PANEL_WIDTH, FAST_FORWARD_FACTOR,
 )
-from utils import angle_to
 from player import Player
 from arena import Arena
 from camera import Camera
@@ -25,7 +25,7 @@ import combat
 import events
 import narration
 import ui
-from utils import distance
+from utils import distance, angle_to
 
 
 def create_starting_players(arena, names, settings=None):
@@ -47,7 +47,21 @@ def create_starting_players(arena, names, settings=None):
             player.proficiency = choice["proficiency"]
         if choice["allies"] == "never":
             player.loner = True
+    for player in players:
+        player.training_score = training_score(player)
     return players
+
+
+def training_score(player):
+    """A training score from 1 to 12, like the Gamemakers give before the
+    Games: mostly strength, plus a little for weapon or fist proficiency and
+    Career training, with some luck. round() gives the nearest whole number."""
+    score = player.strength + random.uniform(-1.5, 1.5)
+    if player.proficiency in WEAPON_TYPES or player.proficiency == "fists":
+        score += 2
+    if player.skill == "training":
+        score += 2
+    return max(1, min(12, round(score)))
 
 
 class Simulation:
@@ -96,8 +110,17 @@ class Simulation:
         if self.countdown_frames > 0:
             self.countdown_frames -= 1
             if self.countdown_frames == 0:
+                best = max(self.players, key=lambda player: player.training_score)
+                worst = min(self.players, key=lambda player: player.training_score)
+                events.log(narration.pick(narration.TRAINING_SCORES, best=best.name, best_score=best.training_score,
+                                          worst=worst.name, worst_score=worst.training_score), "gamemaker")
                 for player in self.players:
                     ai.choose_opening_state(player, self.arena)
+                careers = alliances.form_careers(self.players)
+                if careers is not None:
+                    for member in careers.members:
+                        ai.set_state(member, ai.RUSH_LOOT)  # the Careers all go for the horn
+                        member.target = None
                 events.log(narration.pick(narration.GAMES_BEGIN), "gamemaker")
             return
         self.frames_since_start += 1
@@ -216,7 +239,7 @@ class Simulation:
         self.gamemakers.fallen_today.append(player.name)
         events.add_marker(player.x, player.y, "death", DEATH_MARK_SECONDS)
         if player.cause_of_death == "combat":
-            if getattr(player, "revenge_victim", False):
+            if player.revenge_victim:
                 how = narration.pick(narration.REVENGE_DONE, killer=player.killer_name, victim=player.name)
             else:
                 how = narration.kill(player.name, player.killer_name,
@@ -226,6 +249,7 @@ class Simulation:
             how = narration.death(player.name, player.cause_of_death)
             kind = "death"
         events.log(f"{how} {narration.remaining(remaining)}", kind)
+        events.show_toast(f"{player.name} (District {player.district}) has fallen  -  {remaining} remain")
 
 
 # --- Drawing -----------------------------------------------------------------
@@ -258,17 +282,19 @@ def draw_legend(screen, font):
         y += 18
 
 
-def draw_hud(screen, font, speed, paused, camera, sim):
+def draw_hud(screen, font, speed, paused, camera, sim, fast=False):
     """Speed, camera mode, day and key hints in the top-right corner."""
     status = "PAUSED" if paused else f"Speed {speed:g}x"  # :g drops needless decimals (2.0 -> 2)
+    if fast and not paused:
+        status += " (fast-forwarding a quiet moment)"
     camera_mode = "auto" if camera.auto else "manual"
     time_of_day = "night" if sim.gamemakers.night else "day"
     lines = [
         f"Day {sim.gamemakers.day} ({time_of_day})   {len(sim.players)} alive   Seed {sim.seed}",
         f"{status}   Camera: {camera_mode}",
-        "Space: pause   Up/Down: speed   Tab: debug",
+        "Space: pause   Up/Down: speed   G: fast-forward   Tab: debug",
         "Wheel / drag / WASD: camera   F: follow   C: whole map",
-        "Click a tribute: details",
+        "Click a tribute: details   T: tribute list",
     ]
     width = max(font.size(line)[0] for line in lines) + 20
     ui.panel(screen, pygame.Rect(screen.get_width() - width - 6, 6, width, len(lines) * 18 + 8),
@@ -344,7 +370,7 @@ def inspector_lines(player):
         f"Proficient: {PROFICIENCY_DESCRIPTIONS[player.proficiency]}",
         f"Aggression {player.aggression:.2f}   Strength {player.fighting_strength():.1f}"
         f"   Speed {player.speed:.2f}",
-        f"Kills: {player.kills}   Weapon: {weapon}",
+        f"Kills: {player.kills}   Weapon: {weapon}   Training score: {player.training_score}",
         f"Food {player.inventory['food']}   Water {player.inventory['water']}",
         f"Alliance: {alliance}",
     ]
@@ -420,7 +446,48 @@ def draw_cards(screen, font, camera, selected):
             top = draw_card(screen, font, top, alliance_lines(subject))
 
 
-def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None):
+STATUS_WORDS = {  # what the tribute list says a tribute is doing
+    ai.WAITING: "waiting", ai.RUSH_LOOT: "rushing", ai.FLEE_OUTWARD: "fleeing", ai.SHELTERING: "finding shelter",
+    ai.RESTING: "asleep", ai.SEEKING: "foraging", ai.SEARCHING: "searching", ai.HUNTING: "hunting",
+    ai.AVOIDING: "keeping away", ai.GATHERING: "gathering", ai.FOLLOWING: "with allies", ai.TRACKING: "tracking",
+    ai.EXPLORING: "exploring", ai.FIGHTING: "FIGHTING", ai.INVESTIGATING: "investigating",
+    ai.CONVERGING: "to the horn", ai.DRINKING: "drinking", ai.HIDING: "hiding", ai.AMBUSHING: "lying in wait",
+    ai.CHILLING: "resting",
+}
+
+
+def draw_tribute_panel(screen, sim, top):
+    """Every tribute in district order, on the right: a dot in its alliance's
+    color, its name, and what it is doing (or "fallen")."""
+    rows = sim.all_players
+    row_height = min(15, (screen.get_height() - 180 - top - 24) // len(rows))
+    if row_height < 10:
+        return  # the window is too small to fit the list
+    width = TRIBUTE_PANEL_WIDTH
+    rect = pygame.Rect(screen.get_width() - width - 6, top, width, 26 + len(rows) * row_height)
+    ui.panel(screen, rect, ui.PANEL, None, radius=6, alpha=170)
+    ui.text(screen, f"Tributes  -  {len(sim.players)} of {len(rows)} alive", ui.font(12, bold=True),
+            ui.ACCENT, (rect.x + 8, rect.y + 5))
+    small = ui.font(11)
+    for i, player in enumerate(rows):
+        middle = rect.y + 24 + i * row_height + row_height // 2
+        if player.alive:
+            dot = player.alliance.color if player.alliance is not None else PLAYER_COLOR
+            status = STATUS_WORDS.get(player.state, "")
+            if player.injury_timer > 0:
+                status += ", hurt"
+            name_color, status_color = ui.TEXT, (ui.RED if player.state == ai.FIGHTING else ui.MUTED)
+        else:
+            dot, status, name_color, status_color = (80, 80, 86), "fallen", (110, 110, 118), (110, 110, 118)
+        pygame.draw.circle(screen, dot, (rect.x + 13, middle), 3)
+        # Default names like "D3 Boy" already say the district; others get it in front
+        prefix = f"D{player.district} "
+        label = player.name if player.name.startswith(prefix) else prefix + player.name
+        ui.text(screen, ui.fit(label, small, 100), small, name_color, (rect.x + 22, middle), "midleft")
+        ui.text(screen, ui.fit(status, small, 80), small, status_color, (rect.right - 8, middle), "midright")
+
+
+def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None, fast=False, show_list=True):
     font, big_font, name_font, banner_font = fonts
     sim.arena.draw(screen, camera)  # terrain, cornucopia, plates, loot, fight markers
     sim.gamemakers.draw(screen, camera)  # fires, floods, mutts, parachutes, markers
@@ -454,11 +521,23 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None):
     if debug:
         draw_legend(screen, font)
     events.draw(screen, font)
-    draw_hud(screen, font, speed, paused, camera, sim)
+    draw_hud(screen, font, speed, paused, camera, sim, fast)
     draw_minimap(screen, sim, camera)
+    if show_list:
+        draw_tribute_panel(screen, sim, 114)
     if not debug:  # the debug legend uses the same corner
         draw_cards(screen, font, camera, selected)
+    events.draw_toast(screen, ui.font(15, bold=True))
     pygame.display.flip()
+
+
+def is_quiet(sim, camera):
+    """True when nothing much is happening: after the bloodbath and before
+    the finale, with no fight, chase or mutt anywhere."""
+    if not sim.opening_over or sim.finale_announced or sim.arena.fights or sim.gamemakers.mutts:
+        return False
+    return not any(player.state in (ai.HUNTING, ai.SEARCHING) and player.prey is not None
+                   for player in sim.players)
 
 
 def tribute_at(sim, camera, screen, position):
@@ -492,6 +571,8 @@ def play(screen, clock, names, settings=None, seed=None):
     step_budget = 0.0  # simulation steps owed; lets speeds below 1 skip frames
     frames_after_end = 0  # frames the winner banner has been shown
     selected = None       # the tribute shown in the inspector panel
+    show_list = True      # the tribute list on the right (T)
+    fast_forward = True   # speed through quiet moments (G)
     press_position = None # where the left mouse button went down (to tell clicks from drags)
 
     while True:
@@ -508,6 +589,10 @@ def play(screen, clock, names, settings=None, seed=None):
                 speed_index = max(speed_index - 1, 0)
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 selected = None
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_t:
+                show_list = not show_list
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_g:
+                fast_forward = not fast_forward
             else:
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     press_position = event.pos
@@ -519,10 +604,11 @@ def play(screen, clock, names, settings=None, seed=None):
                 camera.handle_event(event, screen)
 
         speed = SPEED_LEVELS[speed_index]
+        fast = fast_forward and is_quiet(sim, camera)  # skip through quiet moments faster
         if not paused and not sim.game_over:  # once there is a winner, the arena freezes
             # E.g. at speed 4 the budget grows by 4 each frame, so step() runs
             # 4 times; at 0.5 it grows by 0.5, so step() runs every other frame.
-            step_budget += speed
+            step_budget += speed * (FAST_FORWARD_FACTOR if fast else 1)
             while step_budget >= 1:
                 sim.step()
                 step_budget -= 1
@@ -530,7 +616,7 @@ def play(screen, clock, names, settings=None, seed=None):
         if selected is not None and not selected.alive:
             selected = None  # the clicked tribute died: close its card
         camera.update(sim, screen)
-        draw(screen, fonts, sim, camera, debug, speed, paused, selected)
+        draw(screen, fonts, sim, camera, debug, speed, paused, selected, fast, show_list)
         clock.tick(FPS)
 
         # Show the winner for a few seconds, then move on to the debrief

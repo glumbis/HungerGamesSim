@@ -10,7 +10,7 @@ from config import (
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLIANCE_MERGE_CHANCE, SAME_DISTRICT_ALLIANCE_CHANCE,
     ALLY_SHARE_RANGE, FOLLOW_SPREAD,
     BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS, ALLIANCE_WILLINGNESS, SHOWDOWN_PLAYERS,
-    ALLIANCE_NAMES,
+    ALLIANCE_NAMES, CAREER_DISTRICTS,
 )
 from utils import distance
 
@@ -159,12 +159,36 @@ def try_to_ally(player, other, chance=None):
         alliance = Alliance(player, other)
         events.counts["alliances formed"] += 1
         events.log(narration.alliance_formed(alliance, bloodbath=chance_given), "alliance")
+        events.add_ring(alliance.leader.x, alliance.leader.y, alliance.color)
     else:
         newcomer = other if group is player.alliance else player
         group.add(newcomer)
         events.log(narration.pick(narration.ALLIANCE_JOINED, newcomer=newcomer.name,
                                   leader=group.leader.name) + f" ({group.name})", "alliance")
+        events.add_ring(newcomer.x, newcomer.y, group.color)
     return True
+
+
+def form_careers(players):
+    """Like the books: the tributes from the Career districts (1, 2 and 4)
+    who are willing to ally start the Games as one bloodthirsty pack, and
+    all of them rush the cornucopia. Returns the alliance, or None."""
+    careers = [player for player in players
+               if player.district in CAREER_DISTRICTS and not player.loner][:ALLIANCE_MAX_SIZE]
+    if len(careers) < 2:
+        return None
+    alliance = Alliance(careers[0], careers[1])  # founders from District 1: named "the Careers"
+    for player in careers[2:]:
+        alliance.add(player)
+    alliance.style = "bloodthirsty"
+    alliance.choose_new_leader()
+    for player in careers:
+        player.alliance_rolls.update(careers)  # they have already made their choice
+    events.counts["alliances formed"] += 1
+    events.log(narration.pick(narration.CAREERS_FORMED, names=alliance.names(),
+                              leader=alliance.leader.name), "alliance")
+    events.add_ring(alliance.leader.x, alliance.leader.y, alliance.color)
+    return alliance
 
 
 def try_to_merge(player, other):
@@ -192,6 +216,7 @@ def try_to_merge(player, other):
     group.choose_new_leader()
     events.log(narration.pick(narration.ALLIANCE_MERGED, names=group.names(),
                               leader=group.leader.name) + f" They keep the name {group.name}.", "alliance")
+    events.add_ring(group.leader.x, group.leader.y, group.color)
     return True
 
 
@@ -229,7 +254,7 @@ def betray(player):
     player.prey_last_seen = (victim.x, victim.y)
     player.hunt_timer = 0
     events.counts["betrayals"] += 1
-    player.betrayals = getattr(player, "betrayals", 0) + 1  # getattr: 0 if never set before
+    player.betrayals += 1
     events.log(narration.pick(narration.BETRAYAL, traitor=player.name, victim=victim.name), "alliance")
 
     if len(alliance.members) < 2:

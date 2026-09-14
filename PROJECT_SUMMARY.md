@@ -2,517 +2,199 @@
 
 ## Concept
 
-A spectator-style agent-based simulation, not a player-controlled game. Players
-are rendered as dots in a pygame window. Each has strength and speed stats,
-and hunger/thirst/sleep needs that must be managed. Players can acquire
-weapons and loot, move around the arena with organic-but-purposeful behavior,
-form and break alliances, and fight in battles that are randomly resolved but
-weighted by their stats. The map itself is empty except for loot, which is
-concentrated toward the center. Players do not have perfect information about
-each other's locations.
+A spectator-style, agent-based simulation of the Hunger Games in pygame. 24
+tributes (dots) try to survive in a large arena: they rush or flee the
+cornucopia, gather supplies, manage hunger, thirst and sleep, form and break
+alliances, hunt, hide and fight, while the Gamemakers and sponsors interfere.
+The viewer watches; the automatic camera follows the action, an event feed
+narrates it in the style of the books, and a debrief summarizes the Games.
 
-Author is a complete beginner to Python and to game development, and is
-building this as a learning project.
+The author is a complete beginner in Python and game development and builds
+this as a learning project (see "Working style").
 
-## Current status
+**Version:** 2.1 (git tag `v2.1`). Earlier tags: `v2.0`.
 
-The first two build steps are implemented and visually confirmed working.
-(They predate the "Remaining build order" list below, which is numbered from
-the next step onward.)
+## Running it
 
-- **Step 1** — pygame window opens; N players spawn evenly spaced around a
-  circle at the arena center.
-- **Step 2** — players wander the arena organically: each has a persistent
-  `heading` (radians) that drifts by a small random amount every frame rather
-  than being re-randomized, which is what makes the movement look like a
-  smooth wander instead of jitter. Speed is randomized per player. Players
-  bounce off the window edges by reflecting their heading.
+- `python main.py` — use `python` (3.12, has pygame and numpy). The `py`
+  launcher starts 3.14, which has no pygame.
+- `python -m unittest` — automatic tests (plays several whole Games
+  headless; about a minute).
+- Keys in the Games: Space pause, Up/Down speed (0.25×–8×), Tab debug view,
+  mouse wheel / drag / W A S D camera, F automatic camera, C whole map,
+  click a tribute for its card (Esc closes).
+- Debrief: 1/2/3 or Tab switch tabs, click a tribute in Standings for its
+  story (A shows everyone), Enter new Games, R replay the same seed, Esc quit.
 
-- **Needs** (first item of the remaining build order) — hunger, thirst and
-  sleep run from 100 to 0. Each player's drain rate is the base rate from
-  `NEED_SECONDS_TO_EMPTY` scaled by a random ±25% factor. A player dies the
-  moment any need reaches 0 (no health system). A colored warning dot
-  appears above the player for each need below 30 (hunger = orange, left;
-  thirst = blue, middle; sleep = purple, right). Deaths are printed to the
-  terminal for now. Test durations are short on purpose.
-- **Loot** (second item of the remaining build order) — food, water and
-  weapons spawn once at the start (no respawning). Players pick up items
-  they touch. Food/water go into an inventory and are used automatically
-  when hunger/thirst drops below 50, restoring 50. Weapons are carried but
-  have no effect until combat exists.
+## Files
 
-- **AI states, vision and searching** (third item) — see `ai.py`. At the
-  start each player rushes the center (`RUSH_LOOT`) or flees outward
-  (`FLEE_OUTWARD`), biased by a random `aggression` (0–1). Rushing ends once
-  the center is in sight with nothing left to grab; fleeing ends on reaching
-  a point 280 px from the center (kept 60 px from walls). After that, each
-  frame: urgent needs first — `RESTING` when sleep < 35 (until 90);
-  `SEEKING` visible food/water when hunger/thirst < 40 and none is carried;
-  otherwise `SEARCHING` remembered items or random points — if several are
-  urgent, the lowest value wins. With no urgent need: `GATHERING` visible
-  loot within carry limits (3 food, 3 water, 1 weapon), else wander
-  (since replaced by `EXPLORING`, see below).
-  Players see 80 px (originally 120) and remember loot they have seen; they only learn an
-  item is gone when they see its spot again. Steering turns at most
-  0.2 rad/frame and faces the target directly within 30 px. Press **D** (now **Tab**) for
-  the debug view (vision circles, state-colored dots, legend).
-  Loot layout: half of each type in a tight central cluster, the rest
-  spread evenly via a jittered grid. Player and loot size reduced to 4 px
-  so the arena reads larger.
+| File | Responsibility |
+|---|---|
+| `main.py` | Entry point. `Simulation` (one Games: `step()` advances one tick), drawing of the arena view (HUD, minimap, night overlay, cards), the play loop, and the start screen → Games → debrief loop. |
+| `config.py` | Every number and color, grouped by topic. Tuning happens here. |
+| `player.py` | `Player`: traits, needs, inventory, strength, speed, movement, drawing of a tribute. |
+| `ai.py` | `decide()`: each tribute's state and target every frame (the priority list below). |
+| `combat.py` | Fights: starting them, resolving them (win chance, outcomes, escapes, injuries), revenge after kills. |
+| `alliances.py` | `Alliance`: forming, joining, merging, names, supply sharing, betrayal, breaking up. |
+| `gamemakers.py` | `Gamemakers`: day/night, sponsor gifts, fires, floods, mutts, feast, shrinking arena; drawing of these and of markers. |
+| `arena.py` | `Arena`: terrain (painted with numpy), cornucopia, launch plates, loot, fight markers. |
+| `camera.py` | `Camera`: world↔screen conversion, manual control, automatic focus with a switch cooldown. |
+| `events.py` | Event feed and history (colored by kind), counters, death markers, alliance rings. |
+| `narration.py` | Long lists of book-style lines for every event, one picked at random. |
+| `start_screen.py` | Names and per-tribute traits before the Games. |
+| `debrief.py` | End screen with tabs: Summary (numbers, awards, chart), Standings, Story. |
+| `ui.py` | Shared look: colors, fonts, panels, buttons, text. |
+| `utils.py` | `distance`, `angle_to`, `angle_difference`. |
+| `tests/test_simulation.py` | Headless tests of whole Games. |
 
-- **Combat** (fourth item) — see `combat.py` and `ai.py`. Strength is 1–10
-  per player, +5 while carrying a weapon. When a player first sees another,
-  it chooses once to fight or avoid it (chance to fight = its aggression,
-  halved if the other is armed and it is not); the choice lasts while the
-  other stays in sight. Resting players are asleep: they see nothing and
-  are always attacked by anyone who sees them. Hunters chase their prey,
-  search its last-seen spot if it leaves sight, and give up after 10 s
-  (then 5 s without starting a hunt, avoiding instead). A fight starts
-  when a hunter touches its prey. Winner chance = share of combined
-  strength. Outcome weights: elimination 60% (the loser escapes with
-  chance = share of combined speed + 0.2, max 0.9, dropping half its
-  items; otherwise it is eliminated and drops everything), standoff 20%,
-  mutual loss 20% (each drops one item). If both survive, they back off
-  for 3 s and cannot fight meanwhile. Players ignore items they dropped.
-  Fights show a red ring and print to the terminal; the last player
-  standing is announced. Vision reduced to 80 px.
-  `decide()` priority: opening phase → post-fight retreat → react to
-  players in sight → urgent needs → gathering → wander. An urgent need
-  cancels a hunt whose prey is out of sight.
+## How the simulation works
 
-- **Alliances** (fifth item) — see `alliances.py`. When a player on its
-  own or an alliance leader first sees a non-ally, they may team up before
-  choosing fight/avoid: chance = 0.6 × (1 − own aggression) × (1 − the
-  other side's aggression; an alliance answers through its leader). Max 4
-  members; alliances never merge; former allies never ally again. The
-  strongest member leads (re-chosen if the leader dies). The leader decides
-  using the group's combined vision and memory and the group's needs (rest
-  if anyone's sleep is low; seek food/water if anyone is low and nobody
-  carries it). Members follow the leader (distances since tightened, see
-  "Alliance unity" below), join the leader's hunts and sleep beside it.
-  Allies within 40 px share food/water. A leader moves at its slowest
-  member's speed (half that while calm and a member is more than 45 px
-  away). Betrayal: 0.3 per minute × aggression; the
-  betrayer attacks the nearest former ally. An alliance breaks up below 2
-  members, or when only its members are left. Normal view: members in the
-  alliance color, leader with a white ring. Debug view: member-to-leader
-  lines and the `FOLLOWING` state. Events are printed to the terminal.
+### Tributes
+- Each tribute has a district (two per district), strength 1–10, speed
+  0.18–0.45 px/frame, and needs that drain over time (hunger 165 s, thirst
+  130 s, sleep 135 s to empty, ±25% per tribute). A need at 0 kills.
+- Traits (random, or chosen on the start screen):
+  - **temperament** killer / balanced / coward (sets aggression),
+  - **roaming** edge / normal / explorer,
+  - **allies** auto / never (2–6 random "loners" per game never ally),
+  - **proficiency**: a weapon (×1.6 strength holding it), fists (+4
+    unarmed), survival (hunger/thirst ×0.75), stealth (seen at 70% distance,
+    hides more), speed (×1.2 speed, escapes more) or tracking (senses unseen
+    tributes twice as far, chases longer).
+- District skills: 1 sponsor favorite, 2 +2 strength, 3 more ambushes,
+  4 fishing in marsh, 5 escapes more, 7 axes +3, 11 forages food, 12 bows +3.
+- Weapons are knife, spear, axe, sword or bow, each with its own strength
+  bonus and reach (spear and bow attack from further away, except in the
+  bloodbath). Food and water are used automatically below 50.
 
-- **Alliance unity and movement style** (refinement after alliances) —
-  members keep ~16 px from their leader and gather loot only within 45 px
-  of it; following members match the leader's sprint speed. If any member
-  fights and survives, the whole group backs off for 3 s behind its leader
-  (waking a sleeping group), after which the leader resumes the chase
-  against that opponent. Anyone seen hunting a member becomes the group's
-  target. Members join a chase only while the leader is actively hunting.
-  Hunters wait 20 px from prey that cannot be attacked yet instead of
-  standing on it. Allies within 60 px add 50% of their strength in fights.
-  Idle players are `EXPLORING`: they walk to one of the nearest unvisited
-  150 px cells and pause 0.5–2 s on arrival (searching for food/water also
-  uses unvisited cells). The random-walk `WANDER` state is gone; a player
-  without a target stands still. Speed multipliers by state: hunting and
-  avoiding 1.5×, rush and flee 1.3×, seeking 1.2×, everything else 1.0×.
-  Tired players first walk to a spot 40 px from the nearest wall
-  (`SHELTERING`), then rest. A faint red line joins each hunter to its prey
-  in both views. Measured over 5 seeds: member–leader distance median
-  14–15 px; 45–64 fights per run, 66–85% with ally support; combat causes
-  ~30% of deaths, thirst ~50%.
+### A Games, start to finish
+1. **Countdown** (3 s) on launch plates around the cornucopia.
+2. **Bloodbath** (at least 15 s): killers and most balanced tributes rush the
+   horn, grab weapons, fight (every fight is an elimination attempt) and
+   team up (joining an existing group is likelier than founding one);
+   cowards flee outward and cannot be attacked while fleeing. If two or more
+   alliances of 3+ exist, the smallest leaves the middle once. The bloodbath
+   ends when the rush is over and no fight has happened for 0.5 s.
+3. **The middle of the Games**: tributes explore (drawn slightly toward the
+   middle, sometimes sitting still for a while), search for food and water
+   (marsh refills thirst), sleep (forest or a wall; at night non-hunters
+   sleep until dawn; once asleep they stay asleep at least 8 s), and react
+   to everyone they meet: ally, fight or avoid. Days last 90 s.
+4. **The end**: at 8 tributes a feast at the cornucopia; at 6 the arena
+   starts shrinking; at 4 the **finale** — alliances break up and everyone
+   converges on the cornucopia to fight to the death.
 
-- **Alliance tuning, tracking and event feed** — alliance chance =
-  0.2 × (1 − own aggression) × (1 − other side's aggression), offered only
-  face to face (a group member within 80 px of the other player) and only
-  once per pair of players per game. A group's fight chance = leader
-  aggression + 0.2 per extra member (halved against an armed opponent if
-  nobody in the group is armed). Alliance members notice non-allies within
-  150 px (loners: 80 px). Alliances back off only 1 s after a fight
-  (loners: 3 s). Hunters wait 20 px away while either side is still backing
-  off. `TRACKING`: an alliance with fight chance ≥ 0.6 heads toward the
-  nearest non-ally within 350 px via estimated waypoints (120 px ahead,
-  ±0.5 rad error, re-estimated every 2 s). Fight outcome weights:
-  elimination 75%, standoff 10%, mutual loss 15%; escape bonus 0.05.
-  `events.py`: on-screen feed in the bottom-left corner (newest 6 events,
-  10 s each, fading out) of deaths, eliminations, alliance events and the
-  winner, with simulation timestamps; detailed fight lines stay in the
-  terminal. Measured over 5 seeds: 3–9 alliance events per run, 22–32% of
-  player time spent in alliances, `HUNTING` 8–13% of time, combat causes
-  20–23 of 24 deaths, games end between 2:00 and 3:53.
+Before the gong, the Gamemakers announce the training scores (1–12, mostly
+strength; highest and lowest are logged), and the willing tributes from
+Districts 1, 2 and 4 form the Career pack (`alliances.form_careers`), a
+bloodthirsty alliance that rushes the horn together.
 
-- **Personality traits, alliance styles, showdown, speed control** — each
-  player gets a fixed `temperament` (killer 20% / balanced 55% / coward
-  25%; aggression drawn from 0.8–1 / 0.2–0.8 / 0–0.2) and `roaming` (edge
-  25% / normal 50% / explorer 25%). Killers always rush at the start,
-  always choose to fight (even armed opponents) and track unseen players.
-  Cowards always flee at the start and always avoid; they still attack
-  sleeping players, but go back to avoiding once those wake. Balanced
-  players use the aggression-based rules. Edge dwellers flee to the wall
-  and explore points 25–70 px from walls; explorers pick any unvisited
-  cell and pause 40% as long; searching for food/water always looks
-  nearby. Willingness to ally: killers 0.3, cowards 1.0, balanced
-  1 − aggression. Alliance `style` is set by the founders: a killer →
-  bloodthirsty (always fights, tracks); two cowards → defensive (always
-  avoids, still defends members); otherwise opportunist. Showdown at ≤ 4
-  players left: alliances disband, everyone hunts the nearest player with
-  full knowledge of positions, and every fight is an elimination with no
-  escape. `main.py` now has a `Simulation` class; Space pauses and Up/Down
-  set 0.25×–8× (simulation steps per frame), shown top-right. Needs ~13%
-  faster (hunger 65 s, thirst 52 s, sleep 78 s). Traits are printed to the
-  terminal at the start. Measured over 5 seeds: showdown at 1:28–1:51,
-  games end at 1:31–1:52, combat causes 19–23 of 24 deaths, edge dwellers
-  explore at a median 52–68 px from the nearest wall vs 114–188 px for
-  others.
+### Decision order (`ai.decide`, first match wins)
+0. locked in a fight → stand still; asleep and still within the minimum
+   sleep time → keep sleeping (unless in danger)
+1. about to collapse from lack of sleep (and not hunting/escaping) → sleep
+2. Gamemaker danger (fire, flood, mutt, shrinking edge) → run
+3. finale → converge and fight
+4. opening rush or flight
+5. backing off after a fight
+6. an ally is fighting nearby → join in
+7. alliance member → follow the leader (join its hunts, sleep with it)
+8. committed to backing away → keep going; cautious loner hunted in forest →
+   maybe hide up a tree
+9. others in sight → ally, fight (hunt) or avoid
+10. urgent need → sleep, food, water
+11. a fight was heard → investigate or keep away
+12. revenge on a district partner's killer
+13. sent to the middle (quiet spell or feast)
+14. lone killer → maybe set an ambush
+15. collect loot in sight
+16. very aggressive → track unseen tributes nearby
+17. explore (or chill)
 
-- **Large arena, camera and cornucopia start** — world 2400×1800 (window
-  1000×700, resizable). `camera.py`: automatic mode (cornucopia during the
-  opening, then follows a chase framing hunter and prey, otherwise fits all
-  living players) and manual control (mouse wheel zoom, left-drag,
-  W/A/S/D, F = automatic, C = whole map); minimap bottom-right. Debug view
-  moved from D to **Tab**. Opening: 3-second countdown on 24 launch plates
-  around a golden cornucopia; 80% of weapons and 30% of food/water piled at
-  its mouth; balanced players rush with chance aggression + 0.25; rushers
-  grab weapons first; armed rushers (and killers once at the horn) attack
-  the nearest player within 80 px; unarmed rushers flee only when hunted.
-  The feed announces the start and the end of the bloodbath.
-- **Slower, deadlier pace, names and simpler terrain** — speeds
-  0.6–1.6 px/frame; needs hunger 140 s / thirst 115 s / sleep 75 s; rest
-  below 50 sleep; shelter walk at most 300 px; loot 25 food / 30 water /
-  12 weapons. Fights last 1–3 s (`combat.Fight`: both fighters locked in
-  place, pulsing ring); outcome weights 85/5/10; escape bonus −0.15, and
-  escape chance × (0.3 + 0.7 × stamina). A fight alerts players within
-  350 px for 8 s: fight chance ≥ 0.5 → `INVESTIGATING`, otherwise move
-  away. Stamina: sprinting empties it in 4 s, it recovers in 8 s; hunters
-  give up after 6 s. Finale at ≤ 6 players (`SHOWDOWN_PLAYERS`): alliances
-  disband, everyone is `CONVERGING` on the cornucopia, attacks anyone in
-  vision or within 250 px of the horn, and fights are to the death.
-  Terrain: 16 zones (meadow/forest/rock/sand/marsh), each spot taking the
-  type of its nearest zone center, worked out on a 10 px grid and smoothed;
-  visual only. `start_screen.py`: edit the 24 names by district; defaults
-  use the tributes named in book 1 (Glimmer, Cato, Clove, Foxface, Thresh,
-  Rue, Peeta, Katniss) and labels like "D3 Boy" for the rest. Names are
-  drawn above heads (zoom ≥ 0.7) and used in the feed and terminal.
-  Measured over 5 seeds: games end at 2:41–3:35, finale at 2:24–3:15,
-  27–33 fights per game, 1–6 deaths from needs, longest chase ≤ 8.2 s.
+### Fights
+- A hunter within reach of its prey starts a fight; both stand still for
+  1.5–3.5 s. Win chance = each side's share of the combined strength (allies
+  within 110 px add 80% of theirs; a chaser ×1.3; an ambusher ×1.4).
+- Outcomes: elimination 80% / standoff 8% / both hurt 12%. A losing tribute
+  may still escape: speed share − 0.28, lower when tired, chased or injured.
+  Escaping or being hurt means dropped items and 30 s of injury.
+- A kill may make the victim's district partner swear revenge; 3+ kills make
+  a tribute feared.
+- Nearby tributes hear fights: aggressive ones come to look, others move away.
 
-- **Biomes, detailed map, camera, pacing and debrief** — terrain is painted
-  at full resolution with numpy: 22 zones with wavy borders and a soft
-  blotch texture (`Arena.paint_terrain`, `terrain_at`, `find_terrain`).
-  Effects: forest halves seeing distance if either player is in it (tired
-  players look for forest to sleep in within 300 px, cowards 600 px); marsh
-  slows movement to 60% and refills thirst (thirsty players walk to marsh
-  within 700 px and are `DRINKING` until thirst reaches 90); sand drains
-  thirst 1.5× faster and extends seeing distance by 30%; rock and meadow
-  have no effect. World 2800×2100; speeds 0.45–1.15 px/frame; vision 65 px;
-  player and loot size 3 px. Exploring picks destinations at least 600 px
-  away (explorers 1000 px). Lull alerts: after 45 s without a fight,
-  aggressive loners and leaders are shown the nearest non-ally and head
-  there for up to 25 s. Fights are heard within 300 px; only players with
-  fight chance ≥ 0.7 investigate. A player backing away commits to it for
-  2 s (stops jiggling at the edge of vision). Sleep below 20 → the player
-  collapses and sleeps on the spot until 90 (no more sleep deaths). Camera:
-  follows a fight until it is decided plus 0.5 s (zoom 2.4), then chases,
-  otherwise the two closest non-allied players. Alliances: chance 0.35,
-  max 5 members; allies within 80 px add 80% of their strength. Bloodbath
-  (opening only): every fight is an elimination attempt and the escape
-  chance is multiplied by 0.15; lone rushers form a new alliance 20% of the
-  time but join an existing one 70% of the time; rush bias 0.15; the rush
-  (and so the bloodbath) lasts at least 11 s. General
-  escape bonus −0.20. End of game: the arena freezes, the winner's name is
-  shown for 4 s, then `debrief.py` shows stats, standings (placement,
-  district, kills, fate, time) and the scrollable event history; Enter
-  starts new Games with the same names, Esc quits. Measured over 5 seeds:
-  games end at 3:00–4:19, bloodbath 1–7 deaths, opening alliances reach
-  5 members, no sleep deaths.
-- **Alliance merges, chase advantage, cornucopia camp** — two alliances
-  meeting face to face merge with chance 0.15 if the result has at most 5
-  members (`alliances.try_to_merge`; the bigger group absorbs the smaller,
-  strongest member leads). A fight that ends a chase of at least 1 s (the
-  attacker's or its leader's `hunt_timer`, stored as `Fight.chase`) gives the
-  chaser ×1.3 strength and multiplies the chased loser's escape chance by
-  0.6. Alliances of 4+ members explore only within 350 px of the cornucopia
-  (`ai.camp_point`). Checked lightly over 4 seeds: about 1 merge per 4
-  games, roughly a third of fights follow a chase, big-alliance leaders stay
-  a median 150–290 px from the center.
-- **Smaller arena, slower walking, districts** — world 2600×1950; speeds
-  0.4–1.0 px/frame; vision 75 px; `HUNTING` speed ×1.65 (avoiding stays
-  ×1.5, so chasers gain on their prey). Each player has a `district`
-  (id // 2 + 1), shown as "Name (3)" above the dot. Two district partners
-  meeting — or a loner meeting an alliance that holds its partner — ally
-  with chance 0.9 (`SAME_DISTRICT_ALLIANCE_CHANCE`, replaces the normal and
-  bloodbath chances).
-- **Calmer start, slower pace, smaller map** — world 2200×1650; speeds
-  0.3–0.75 px/frame; `RUSH_LOOT`/`FLEE_OUTWARD` speed ×1.1 (was ×1.3);
-  flee up to 8 s toward 550 px out. Players in `FLEE_OUTWARD` are left out
-  of everyone's `visible_players`, so they can't be attacked or offered an
-  alliance while fleeing. Needs last longer (hunger 160 s, thirst 130 s,
-  sleep 85 s). Alliance chance 0.3, bloodbath new-alliance chance 0.17, max
-  alliance size 6. Exploring trips at least 500 px (explorers 850 px);
-  marsh search 600 px.
-- **More rushers, loners, more alliances** — rush bias 0.25; alliance
-  chance 0.4. Each game 2–6 random players get the "no alliance" trait
-  (`Player.loner`, set in `main.create_starting_players`; `LONERS_PER_GAME`):
-  they never form, join or merge into an alliance, not even with their
-  district partner.
-- **Center pull, even more alliances, bloodbath end, vision** — exploring
-  and searching destinations (not edge dwellers') are moved 15% of the way
-  toward the middle (`CENTER_PULL`). Alliance chance 0.5. Vision 90 px
-  (alliance sense radius 115 px). "The bloodbath is over" is only logged
-  once no fight is in progress and none has been for 0.5 s
-  (`BLOODBATH_END_QUIET_SECONDS`, `Simulation.quiet_frames`).
-- **Quiet spells, no rest while busy, status symbols** — after 45 s without
-  a fight there is no announcement any more: `ai.send_to_middle` quietly
-  sends a random 40% (at least 2) of the loners and alliance leaders toward
-  a point near the cornucopia for up to 25 s (`follow_tip`, stops within
-  75 px). Resting never starts while hunting or escaping: the sleep collapse
-  waits until the player has no prey, isn't avoiding and has no retreat or
-  avoid timer left, and tiredness no longer cancels a hunt. Under the dot,
-  a small red blade marks a weapon and a small "z" marks a sleeping player
-  (`Player.draw_status_icons`).
-- **Shorter quiet spells, bolder avoidants** — the quiet spell now starts
-  after 25 s without a fight (`LULL_SECONDS`). From then until the next
-  fight starts (`ai.lull_active`, set in `main.py`, cleared in
-  `combat.start_fight`), players whose fight chance is below 0.5 (cowards
-  and defensive alliances included) get +0.15 (`LULL_FIGHT_BONUS`).
-- **Hunger Games narration** — `narration.py` holds long lists of
-  book-flavored lines for every logged event (Games begin, kills with or
-  without a weapon plus extra bloodbath lines, deaths by hunger/thirst/
-  sleep, tributes remaining, alliance formed (extra bloodbath lines),
-  joined, merged, broke up (per reason), betrayal, new leader, escape,
-  standoff, both hurt, bloodbath over, finale, winner, no survivors); one
-  line is picked at random each time. Escapes, standoffs and mutual losses
-  are now logged too. The debrief counts alliances and betrayals through
-  `events.counts` instead of searching the log text.
-- **Book features round (20 suggestions + alliance names)** — new module
-  `gamemakers.py` (class `Gamemakers`, created by `main.Simulation`, reached
-  from the AI through `ai.dangers`):
-  day/night cycle (70 s days, last 40% night: darker overlay, vision ×0.7,
-  sleepier; nightfall shows the day's fallen at the top of the screen, dawn
-  starts the next day); sponsor parachutes every 12 s to struggling
-  tributes, weighted toward kills, big alliances and District 1; Gamemaker
-  events every 50–80 s near a random tribute (fire or flood circles with a
-  small death chance per frame, or 2–4 mutts that chase the nearest tribute
-  and kill or injure it); the arena shrinks toward the cornucopia from 8
-  tributes left over 150 s (outside is deadly); a feast at 9 left sends 40%
-  of loners and leaders to the middle and drops supplies there. Tributes run
-  from all of these first (`ai.flee_danger`). AI additions: cautious loners
-  being hunted in forest may hide up a tree (`HIDING`, only visible from
-  12 px); idle lone killers set ambushes by marsh or supplies (`AMBUSHING`,
-  ×1.4 strength when sprung); district partners (not cowards, 40%) swear
-  revenge on a killer (not for bloodbath deaths) and track it within 400 px;
-  tributes with 3+ kills are feared (others ×0.6 fight chance, killers ×1.3).
-  District skills (`DISTRICT_SKILLS`): 1 sponsor favorite, 2 +2 strength,
-  3 more ambushes, 4 fishing in marsh, 5 escapes more, 7 axes +3, 11
-  forages food, 12 bows +3. Weapon types knife/spear/axe/sword/bow with own
-  strength and reach (spear 14, bow 30; everyone fights at 10 px during the
-  bloodbath). Injuries (30 s, ×0.7 speed and strength) after escaping a
-  fight, a mutual loss or a mutt. Visuals: red cross on injured dots, faint
-  outline when hiding, bow icon, crosses where tributes fell, hearts /
-  broken hearts for alliance news, parachutes, hazards, mutts and the
-  shrinking ring (also on the minimap). Click a tribute for an inspector
-  panel (Esc closes). Event feed colored by kind (`EVENT_COLORS`). Alliances
-  get names (`ALLIANCE_NAMES`; founders from Districts 1/2/4 become "the
-  Careers"). Seeds: every Games has a seed shown in the HUD and debrief; R
-  in the debrief replays the same seed. Debrief: awards, a chart of
-  tributes alive over time, colored events, click a tribute to see only its
-  story. Automatic tests in `tests/` (`python -m unittest`). Pace: needs
-  last longer (hunger 210 s, thirst 170 s, sleep 100 s), fights less deadly
-  (0.65/0.15/0.20), quiet spell 45 s, hunts give up after 5 s, tracking
-  220 px and only for fight chance ≥ 0.9, fights heard within 220 px.
-  Committed and tagged as **v2.0**.
-- **After 2.0: less clutter, cards, slower, night sleep** — launch plates
-  190 px from the cornucopia, cornucopia loot spread 55 px, bloodbath radius
-  100 px, meadow clearing 320 px. During the opening (`events.opening`) no
-  heart markers are shown and death crosses fade after 4 s. The automatic
-  camera also frames a mutt within 160 px of a tribute, and remembers whom it
-  shows (`Camera.watched`). Cards (top left, `main.draw_cards`): a clicked
-  tribute's card, otherwise cards for the watched tributes — a tribute in an
-  alliance shows its alliance's card (name, style, leader, each member's
-  strength, weapon, kills, injury), at most two. Cards close when the tribute
-  dies. Slower pace: speeds 0.22–0.56 px/frame, mutts 0.7, days 90 s, fights
-  1.5–3.5 s, shrink over 200 s, needs 250/205/120 s. Night: tributes with
-  fight chance below 0.7 go to sleep below 85 and sleep until fully rested
-  (`NIGHT_SLEEP_THRESHOLD`, `NIGHT_HUNT_MIN_FIGHT_CHANCE`).
-- **No hearts, slower, alliances as a unit** — heart / broken-heart markers
-  removed (only death crosses remain). Speeds 0.18–0.45 px/frame, mutts
-  0.55, needs 280/230/135 s. Alliances: betrayal 0.08 per minute (was 0.3);
-  members keep 12 px from the leader and speed up ×1.3 when further than
-  45 px behind; allies within 110 px add their strength to a fight. When an
-  ally is locked in a fight, every member and the leader within 250 px go
-  for the opponent (`ai.assist_allies`, step 2b); members join the leader's
-  hunt or search within 250 px even without seeing the prey
-  (`ALLIANCE_ASSIST_RADIUS`, `FOLLOW_CATCHUP_MULTIPLIER`).
-- **New look, trait picker, tabbed debrief, longer bloodbath** — `ui.py`
-  holds the shared look (dark panels, gold accent, Segoe UI via
-  `ui.font`, `ui.panel`, `ui.button`, `ui.text`, `ui.fit`). Start screen
-  (`start_screen.py`): boys left, girls right, one row per district with a
-  name field and three clickable chips per tribute — temperament
-  (random/killer/balanced/coward), roaming (random/edge/normal/explorer),
-  allies (auto/never); left click = next choice, right click = previous,
-  "All traits random" resets. It returns (names, settings);
-  `main.create_starting_players` applies them after the random rolls, and
-  settings are kept for new Games and replays. Debrief (`debrief.py`) now
-  has tabs (1 Summary: numbers, awards, chart; 2 Standings: click a row to
-  open that tribute's story; 3 Story: scrollable events, A shows everyone).
-  Arena look: thin darker lines between terrain areas, less grain, a
-  clearer palette, loot drawn as shapes (food circle, water drop, weapon
-  diamond), ribs on the cornucopia, dots with a shadow and dark outline,
-  names on small dark labels, see-through panels behind the HUD and the
-  event feed, smaller death crosses. The rush lasts at least 15 s. Once per
-  game, 5 s or more into the opening, if two or more alliances of 3+ are
-  in the arena (and not already roaming), the smallest leaves toward a
-  point 650 px out on its side (members flee, untouchable, the leader then
-  follows a tip there) and never camps at the cornucopia (`Alliance.roams`,
-  `BIG_ALLIANCE_SIZE`, `LEAVE_DISTANCE`).
-- **Scarcity, deadlier fights, proficiency, chilling, camera cooldown** —
-  tributes spread out more (flee 800 px, center pull 0.04, exploring trips
-  650 px / explorers 1000 px) and supplies are scarcer (food 14, water 16,
-  an item refills 40, hunger 165 s, thirst 130 s, marsh refill 60 s), so
-  hunger and thirst kill again. Fights are deadlier (outcomes 0.80 / 0.08 /
-  0.12, escape bonus −0.28). Idle tributes also sit down at any moment
-  (`CHILL_START_PER_SECOND` 0.05; on arrival 50%). New trait `Player.proficiency` (also a
-  "Proficient" chip on the start screen and a line on the card): a weapon
-  (knife/spear/axe/sword/bow: ×1.6 strength while holding it), fists (+4
-  strength unarmed), survival (hunger and thirst ×0.75), stealth (seen at
-  70% distance, hides 3× as often), speed (×1.2 speed, ×1.3 escape) or
-  tracking (senses unseen tributes twice as far, chases 1.5× longer). On
-  reaching an exploring destination a tribute sometimes chills for 6–18 s
-  (`CHILLING`, 35%). Camera: rewritten around a "subject" (fight, mutt,
-  chase, pair); it stays on one for at least 3 s unless it is over
-  (`CAMERA_SWITCH_COOLDOWN_SECONDS`). The bloodbath is shown at zoom 1.3.
+### Alliances
+- Offered face to face; chance depends on both sides' willingness (district
+  partners 90%, loners never). Max 6 members. Two alliances may merge (15%).
+- The strongest member leads and decides for the group using everyone's
+  sight and needs; members follow closely, join the leader's hunts and every
+  ally's fights, and share food and water. Big alliances (4+) camp near the
+  cornucopia unless they left it in the opening.
+- Rare betrayals; an alliance breaks up when too few members are left, when
+  only allies remain, or at the finale. Each alliance gets a name ("the
+  Careers" for founders from Districts 1, 2 and 4).
 
-All planned features, including the post-run summary (the debrief), are
-implemented.
+### The Gamemakers and the Capitol (`gamemakers.py`)
+- Day/night: night darkens the view, shortens vision and sends non-hunters to
+  sleep; at nightfall the day's fallen are shown.
+- Sponsor parachutes for struggling tributes (favoring kills, big alliances
+  and District 1).
+- Every 50–80 s near a random tribute: a fire, a flood or 2–4 mutts.
+- After 45 s without a fight, some tributes are quietly sent toward the
+  middle and cautious ones become a little bolder.
 
-**Tuning to revisit later** — player speeds (1–3 px/frame) and need
-durations are deliberately fast so test runs are short. Speed control now
-exists (Space / Up / Down), so these can be lowered for viewing without
-slowing down testing. Needs have since been retuned (hunger 140 s,
-thirst 115 s, sleep 75 s); games currently end at about 3:00–4:20. Combat currently causes about 15–21 of 24
-deaths (5 test seeds, escape bonus −0.20) — about the level once judged to
-be too many fights. `ESCAPE_BONUS`, `OUTCOME_WEIGHTS` and
-`ALLIANCE_RETREAT_SECONDS` in `config.py` are the main levers.
+### What the viewer sees
+- Dots in alliance colors (leader with a white ring), names with district,
+  warning dots for low needs, symbols under the dot (weapon, sleep), a red
+  cross when injured, a faint outline when hiding.
+- Loot as shapes (food circle, water drop, weapon diamond); a pulsing ring
+  around fights, a red flash when decided, a bigger flashing ring in the
+  alliance's color when an alliance forms or grows, small crosses where
+  tributes fell; fires, floods, mutts, parachutes and the shrinking ring.
+- Automatic camera: the bloodbath zoomed out, then fights, mutt encounters,
+  chases and the closest pair of tributes; it stays on each for at least 3 s
+  unless it ends. Cards (top left) for the tributes or alliances being shown,
+  or for a clicked tribute.
+- Event feed (bottom left) with book-style lines, colored by kind; HUD (top
+  right) with day, tributes alive and seed; minimap (bottom right); a
+  tribute list on the right (T) with each tribute's alliance color and what
+  it is doing, or "fallen"; a short headline in the top middle whenever a
+  tribute falls.
+- Quiet stretches (after the bloodbath, before the finale, with no fight,
+  chase or mutt) play 1.5× faster; G turns this off (`FAST_FORWARD_FACTOR`).
+- Cards also show a tribute's training score; sponsors favor high scores.
+- Every Games has a seed; the same seed and settings replay the same Games.
 
-## Architecture
+## Balance (measured with headless test games before 2.1)
+Games last about 3–4½ minutes; the bloodbath kills 1–10; combat causes most
+deaths, hunger and thirst 1–9, the Gamemakers a few. The main levers in
+`config.py`: `ESCAPE_BONUS` and `OUTCOME_WEIGHTS` (lethality),
+`NEED_SECONDS_TO_EMPTY` and `LOOT_COUNTS` (starvation), `PLAYER_*_SPEED`
+(pace), `ALLIANCE_CHANCE` (alliances).
 
-Agreed module split — see the "Remaining build order" section for what's
-still empty:
+## History (short)
+Built step by step: window and wandering dots → needs → loot → AI states and
+vision → combat → leader-based alliances → event feed → traits and finale →
+large arena with camera and cornucopia start → biomes and debrief →
+narration → v2.0 (Gamemakers, sponsors, day/night, district skills, weapon
+types, injuries, revenge, cards, seeds, tests) → new look, trait picker,
+tabbed debrief, proficiency, chilling, camera cooldown → v2.1 (minimum sleep,
+alliance rings, clean-up of code, config and this document).
 
-| File | Status | Responsibility |
-|---|---|---|
-| `config.py` | Implemented (partial) | Constants only: window size, colors, player count/radius, speed range, wander turn rate. Will grow as new systems are added. |
-| `player.py` | Implemented (partial) | `Player` class. Has: `id`, `x`, `y`, `speed`, `heading`, `alive`, `cause_of_death`, `needs`/`decay_rates` dicts, `move()`, `update_needs()`, `draw()`, `draw_warnings()`, `inventory`, `pick_up()`, `use_supplies()`, `can_carry()`, AI fields (`aggression`, `state`, `state_timer`, `target`, `search_point`, `known_loot`), `draw_vision()`, combat/hunting fields (`strength`, `kills`, `killer_id`, `reactions`, `prey`, `prey_last_seen`, `hunt_timer`, `hunt_cooldown`, `retreat_timer`, `retreat_from`). Alliance fields (`alliance`, `former_allies`, `follow_offset`, `visible_loot`, `visible_players`), `fighting_strength()`, `current_speed()`, traits (`temperament`, `roaming`), exploring/tracking fields. |
-| `main.py` | Implemented | Entry point: `create_starting_players()` (circle formation), `Simulation` class (`step()` advances the world one tick), drawing (`draw()`, legend, HUD), and the main loop with pause/speed keys. |
-| `arena.py` | Implemented (partial) | `LootItem` and `Arena`: terrain background, cornucopia and launch plates, loot spawning/pickup, fights in progress and fight markers, drawing through the camera. Wall-bounce is currently handled inline in `Player.move()` against the screen edges from `config.py` — this should likely move here once the arena boundary is distinct from the window itself. |
-| `ai.py` | Implemented (partial) | Per-player decision logic / state machine. Decides movement goals, alliance proposals/betrayals. |
-| `combat.py` | Implemented | Battle resolution logic. Takes players/alliance groups, returns an outcome. |
-| `alliances.py` | Implemented | `Alliance` class (members, leader, color), forming/joining, supply sharing, betrayal, breakups. |
-| `events.py` | Implemented | Event feed: `log()` prints and stores timestamped events, `update()` expires them, `draw()` shows them bottom-left. |
-| `camera.py` | Implemented | `Camera`: world↔screen conversion, zoom limits, manual control (wheel, drag, WASD, F, C), automatic focus (opening, chases, all players). |
-| `start_screen.py` | Implemented | Start screen for editing the 24 tribute names before the Games. |
-| `debrief.py` | Implemented | End-of-game debrief: winner, stats, standings, scrollable event history; Enter = new Games, Esc = quit. |
-| `utils.py` | Implemented | Shared math helpers (`distance`, `angle_to`, `angle_difference`) so `ai.py` and `combat.py` don't duplicate logic. |
-
-## Design decisions established so far
-
-**Movement** — persistent-heading random walk, not goal-seeking yet. Speed is
-currently just a random value assigned per player at spawn
-(`PLAYER_MIN_SPEED`/`PLAYER_MAX_SPEED` in config) as a placeholder for the
-eventual speed stat, which will need to also feed into combat flee rolls.
-`heading` is wrapped to the range 0–2π every frame; when steering toward a
-target, the angle difference must also be wrapped to −π…π so players turn
-the short way round.
-
-**Game loop order** — each frame runs all updates first, then draws all
-players, so interactions never leave a frame half-updated on screen.
-
-**Environment** — run with `python` (3.12, has pygame). The `py` launcher
-defaults to 3.14, which has no pygame. VS Code is pointed at 3.12 in
-`.vscode/settings.json`.
-
-**AI state machine** (implemented in `ai.py`) — each player gets a
-`state` (e.g. `RUSH_LOOT`, `FLEE_OUTWARD`, `SEEK_WATER`, `HUNTING`,
-`SEARCHING`, `RESTING`, `AVOIDING`) that determines their current movement
-target. A personality trait (e.g. aggression) assigned at spawn biases the
-initial rush-vs-flee choice and other decisions. Needs dropping below a
-threshold should override whatever state a player is in. Alliance
-formation/betrayal decisions live in this layer — `combat.py` only needs to
-know two players are currently allied, it doesn't decide alliances.
-
-**Vision and the "searching" state** (implemented) — each player has a vision radius; the AI only reacts to threats
-or loot within it, which is what enforces imperfect information about other
-players' locations. A dedicated `SEARCHING` state handles the case where a
-player has a reason to look for something (an enemy last seen nearby, hunger
-driving loot-seeking) but nothing is currently in vision: they move
-purposefully toward a last-known location or plausible direction rather than
-falling back to plain wander.
-
-**Alliance structure** (implemented in `alliances.py` and `ai.py`) — every alliance has
-one leader. The leader decides what the alliance does (its state/goal),
-taking into account the shared needs of all members rather than only its
-own. The other members loosely follow the leader — staying near it and
-adopting its goal, while keeping some individual movement — instead of
-making independent decisions.
-
-**Combat resolution** (implemented in `combat.py`):
-- Effective strength = own strength + a fraction of active allies' strength.
-- Base win probability = `strength_A / (strength_A + strength_B)`.
-- Speed determines whether the loser manages to flee instead of being
-  eliminated — a separate roll, not part of the win/lose roll itself.
-- The outcome should be drawn from multiple weighted categories (eliminate /
-  opponent flees and drops resources / both flee / mutual resource loss), not
-  a strict binary win/lose.
-
-## Accepted enhancements (build in after core mechanics)
-
-- Vision radius + `SEARCHING` state — folded directly into the AI design
-  above, not a bolt-on.
-- **Elimination feed** — a running text log of key events (eliminations,
-  alliances formed/broken) for a viewer to read.
-- **Visual state indicators** — dim a player's dot as hunger/thirst drops;
-  tint allied players the same color.
-- **Adjustable simulation speed** — pause / speed up / slow down via keypress.
-  Lower priority; matters mainly for iteration speed once full runs take a
-  while.
-- **Post-run summary** — final rankings, kill counts, alliance history,
-  shown or exported once a winner is decided.
-
-## Explicitly rejected — do not reintroduce
-
-- **Shrinking safe zone** (arena contracts over time). Rejected outright.
-- **Care packages** (mid-run bonus loot drop events). Rejected outright.
-
-## Remaining build order
-
-1. ~~Needs — hunger/thirst/sleep decay over time; some way to visualize it
-   (feeds into the visual state indicators enhancement).~~ Done.
-2. ~~Loot — spawning and pickup in `arena.py`, weighted toward the center.~~ Done.
-3. ~~AI states with real goals, including vision radius and `SEARCHING`
-   (`ai.py`).~~ Done (`HUNTING`/`AVOIDING` moved to step 4).
-4. ~~Combat resolution (`combat.py`).~~ Done, including `HUNTING`/`AVOIDING`.
-5. ~~Alliances, layered on top of AI and combat.~~ Done (leader-based — see
-   "Alliance structure" above).
-6. Remaining enhancements: ~~elimination feed~~ (done, `events.py`),
-   ~~visual state indicators~~ (done: warning dots, alliance colors, leader
-   rings, debug view), ~~simulation speed control~~ (done),
-   ~~post-run summary~~ (done, `debrief.py`).
-
-Each step has been built and confirmed visually before moving to the next —
-that pattern should continue.
+Ideas the user explicitly declined earlier were later requested in other
+forms (the shrinking arena and sponsor gifts are now wanted features).
+Biome idea offered but not chosen: rock as defensive ground.
 
 ## Requested changes for next session
 
-No open requests. The most recent rounds are implemented (see "Biomes,
-detailed map, camera, pacing and debrief" under Current status). The user
-agreed that games may stay around 3–4 minutes. Biome effects that were
-offered but not chosen: rock as defensive ground (fight bonus, safer
-sleep) — only add if the user asks.
+No open requests.
 
 ## Working style
 
 - Complete beginner to Python game development — wants explanations
   accompanying code, not silent code dumps.
-- Wants to learn and not just produce a result. Run code by and ensure
-  it is understood and productive for learning.
-- Strong preference for incremental builds: confirm each stage visually
-  working before moving to the next feature.
-- Prefers direct, precise communication over softened or over-elaborated
-  explanations.
-- Prefers formal, professional tone.
+- Wants to learn and not just produce a result.
+- Prefers incremental builds, confirmed visually.
+- Often asks for light testing only ("no need to test rigorously").
+- Prefers direct, precise communication and a formal, professional tone.
+- Commits and pushes happen when the user asks; versions are tagged when the
+  user names them (v2.0, v2.1).
