@@ -243,8 +243,14 @@ class Arena:
         # grain, so the ground looks natural instead of flat
         palette = np.array([TERRAIN_COLORS[kind] for kind in TERRAIN_KINDS], dtype=np.int16)
         rgb = palette[grid]  # a color for every pixel: shape (width, height, 3)
-        blotches = self.smooth_noise(rng, 60) * 8 + self.smooth_noise(rng, 15) * 4
-        grain = rng.integers(-4, 5, size=(WORLD_WIDTH, WORLD_HEIGHT))
+        # A thin darker line wherever two terrain areas meet, so each area reads clearly.
+        # Comparing the grid with itself shifted by one pixel finds those borders.
+        edges = np.zeros(grid.shape, dtype=bool)
+        edges[1:, :] |= grid[1:, :] != grid[:-1, :]
+        edges[:, 1:] |= grid[:, 1:] != grid[:, :-1]
+        rgb[edges] = (rgb[edges] * 0.7).astype(np.int16)
+        blotches = self.smooth_noise(rng, 60) * 6 + self.smooth_noise(rng, 15) * 3
+        grain = rng.integers(-2, 3, size=(WORLD_WIDTH, WORLD_HEIGHT))
         shade = (blotches + grain).astype(np.int16)[:, :, None]  # [:, :, None] adds the color axis
         rgb = np.clip(rgb + shade, 0, 255).astype(np.uint8)    # clip keeps values within 0-255
 
@@ -314,20 +320,42 @@ class Arena:
         self.draw_background(screen, camera)
 
         for x, y in self.plates:
-            pygame.draw.circle(screen, PLATE_COLOR, camera.world_to_screen(x, y, screen),
-                               camera.size(PLATE_RADIUS, 2))
+            point = camera.world_to_screen(x, y, screen)
+            radius = camera.size(PLATE_RADIUS, 2)
+            pygame.draw.circle(screen, PLATE_COLOR, point, radius)
+            pygame.draw.circle(screen, (110, 110, 110), point, radius, 1)
 
         horn_points = [camera.world_to_screen(x, y, screen) for x, y in self.horn]
         pygame.draw.polygon(screen, CORNUCOPIA_COLOR, horn_points)
+        # Ribs across the horn: the outline is the left side followed by the
+        # right side reversed, so point i on the left pairs with point -1-i
+        half = len(horn_points) // 2
+        for i in range(2, half - 1, 3):
+            pygame.draw.line(screen, CORNUCOPIA_OUTLINE_COLOR, horn_points[i], horn_points[-1 - i], 1)
         pygame.draw.polygon(screen, CORNUCOPIA_OUTLINE_COLOR, horn_points, 2)
         pygame.draw.circle(screen, CORNUCOPIA_OUTLINE_COLOR,  # the dark opening
                            camera.world_to_screen(*self.mouth, screen), camera.size(self.mouth_radius, 2))
 
         size = camera.size(LOOT_SIZE, 2)
         for item in self.loot:
-            screen_x, screen_y = camera.world_to_screen(item.x, item.y, screen)
-            pygame.draw.rect(screen, LOOT_COLORS[item.kind],
-                             (screen_x - size // 2, screen_y - size // 2, size, size))
+            x, y = camera.world_to_screen(item.x, item.y, screen)
+            color = LOOT_COLORS[item.kind]
+            outline = (25, 25, 25)
+            if item.kind == "food":
+                # food: a round loaf
+                pygame.draw.circle(screen, outline, (x, y), size + 1)
+                pygame.draw.circle(screen, color, (x, y), size)
+            elif item.kind == "water":
+                # water: a drop (a circle with a point on top)
+                drop = [(x, y - size * 2), (x - size, y), (x + size, y)]
+                pygame.draw.polygon(screen, color, drop)
+                pygame.draw.circle(screen, color, (x, y), size)
+                pygame.draw.circle(screen, outline, (x, y), size, 1)
+            else:
+                # weapon: a diamond
+                diamond = [(x, y - size - 1), (x + size + 1, y), (x, y + size + 1), (x - size - 1, y)]
+                pygame.draw.polygon(screen, color, diamond)
+                pygame.draw.polygon(screen, outline, diamond, 1)
 
         for fight in self.fights:
             # A pulsing ring around a fight in progress (sin swings between -1 and 1)

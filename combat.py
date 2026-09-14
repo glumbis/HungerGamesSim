@@ -166,6 +166,8 @@ def resolve_fight(attacker, defender, arena, to_the_death, bloodbath, chase=Fals
             escape_chance *= BLOODBATH_ESCAPE_FACTOR  # hard to get away in the chaos
         if chase and loser is defender:
             escape_chance *= CHASED_ESCAPE_FACTOR  # run down: hard to get away
+        if loser.proficiency == "speed":
+            escape_chance = min(ESCAPE_MAX, escape_chance * 1.3)  # a fast runner
         if loser.skill == "cunning":
             escape_chance = min(ESCAPE_MAX, escape_chance * 1.5)  # District 5: slippery
         if loser.injury_timer > 0:

@@ -311,24 +311,13 @@ class Gamemakers:
 
         for x, y, kind, _ in events.markers:
             point = camera.world_to_screen(x, y, screen)
-            size = camera.size(4, 3)
+            size = camera.size(3, 2)
             if kind == "death":
                 # a small cross where a tribute fell
                 pygame.draw.line(screen, DEATH_MARK_COLOR, (point[0] - size, point[1] - size),
                                  (point[0] + size, point[1] + size), 2)
                 pygame.draw.line(screen, DEATH_MARK_COLOR, (point[0] + size, point[1] - size),
                                  (point[0] - size, point[1] + size), 2)
-            else:
-                # a heart (two circles and a triangle) above the spot, cracked if broken
-                top = point[1] - camera.size(14, 10)
-                half = size // 2 + 1
-                pygame.draw.circle(screen, HEART_COLOR, (point[0] - half, top), half)
-                pygame.draw.circle(screen, HEART_COLOR, (point[0] + half, top), half)
-                pygame.draw.polygon(screen, HEART_COLOR, [(point[0] - size, top), (point[0] + size, top),
-                                                          (point[0], top + size + half)])
-                if kind == "broken":
-                    pygame.draw.line(screen, (20, 20, 20), (point[0], top - half),
-                                     (point[0], top + size + half), 2)
 
     def draw_fallen(self, screen, font):
         """At nightfall: the names of the day's fallen, in the sky (top middle)."""

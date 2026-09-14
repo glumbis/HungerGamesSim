@@ -316,6 +316,67 @@ the next step onward.)
   last longer (hunger 210 s, thirst 170 s, sleep 100 s), fights less deadly
   (0.65/0.15/0.20), quiet spell 45 s, hunts give up after 5 s, tracking
   220 px and only for fight chance ≥ 0.9, fights heard within 220 px.
+  Committed and tagged as **v2.0**.
+- **After 2.0: less clutter, cards, slower, night sleep** — launch plates
+  190 px from the cornucopia, cornucopia loot spread 55 px, bloodbath radius
+  100 px, meadow clearing 320 px. During the opening (`events.opening`) no
+  heart markers are shown and death crosses fade after 4 s. The automatic
+  camera also frames a mutt within 160 px of a tribute, and remembers whom it
+  shows (`Camera.watched`). Cards (top left, `main.draw_cards`): a clicked
+  tribute's card, otherwise cards for the watched tributes — a tribute in an
+  alliance shows its alliance's card (name, style, leader, each member's
+  strength, weapon, kills, injury), at most two. Cards close when the tribute
+  dies. Slower pace: speeds 0.22–0.56 px/frame, mutts 0.7, days 90 s, fights
+  1.5–3.5 s, shrink over 200 s, needs 250/205/120 s. Night: tributes with
+  fight chance below 0.7 go to sleep below 85 and sleep until fully rested
+  (`NIGHT_SLEEP_THRESHOLD`, `NIGHT_HUNT_MIN_FIGHT_CHANCE`).
+- **No hearts, slower, alliances as a unit** — heart / broken-heart markers
+  removed (only death crosses remain). Speeds 0.18–0.45 px/frame, mutts
+  0.55, needs 280/230/135 s. Alliances: betrayal 0.08 per minute (was 0.3);
+  members keep 12 px from the leader and speed up ×1.3 when further than
+  45 px behind; allies within 110 px add their strength to a fight. When an
+  ally is locked in a fight, every member and the leader within 250 px go
+  for the opponent (`ai.assist_allies`, step 2b); members join the leader's
+  hunt or search within 250 px even without seeing the prey
+  (`ALLIANCE_ASSIST_RADIUS`, `FOLLOW_CATCHUP_MULTIPLIER`).
+- **New look, trait picker, tabbed debrief, longer bloodbath** — `ui.py`
+  holds the shared look (dark panels, gold accent, Segoe UI via
+  `ui.font`, `ui.panel`, `ui.button`, `ui.text`, `ui.fit`). Start screen
+  (`start_screen.py`): boys left, girls right, one row per district with a
+  name field and three clickable chips per tribute — temperament
+  (random/killer/balanced/coward), roaming (random/edge/normal/explorer),
+  allies (auto/never); left click = next choice, right click = previous,
+  "All traits random" resets. It returns (names, settings);
+  `main.create_starting_players` applies them after the random rolls, and
+  settings are kept for new Games and replays. Debrief (`debrief.py`) now
+  has tabs (1 Summary: numbers, awards, chart; 2 Standings: click a row to
+  open that tribute's story; 3 Story: scrollable events, A shows everyone).
+  Arena look: thin darker lines between terrain areas, less grain, a
+  clearer palette, loot drawn as shapes (food circle, water drop, weapon
+  diamond), ribs on the cornucopia, dots with a shadow and dark outline,
+  names on small dark labels, see-through panels behind the HUD and the
+  event feed, smaller death crosses. The rush lasts at least 15 s. Once per
+  game, 5 s or more into the opening, if two or more alliances of 3+ are
+  in the arena (and not already roaming), the smallest leaves toward a
+  point 650 px out on its side (members flee, untouchable, the leader then
+  follows a tip there) and never camps at the cornucopia (`Alliance.roams`,
+  `BIG_ALLIANCE_SIZE`, `LEAVE_DISTANCE`).
+- **Scarcity, deadlier fights, proficiency, chilling, camera cooldown** —
+  tributes spread out more (flee 800 px, center pull 0.04, exploring trips
+  650 px / explorers 1000 px) and supplies are scarcer (food 14, water 16,
+  an item refills 40, hunger 165 s, thirst 130 s, marsh refill 60 s), so
+  hunger and thirst kill again. Fights are deadlier (outcomes 0.80 / 0.08 /
+  0.12, escape bonus −0.28). Idle tributes also sit down at any moment
+  (`CHILL_START_PER_SECOND` 0.05; on arrival 50%). New trait `Player.proficiency` (also a
+  "Proficient" chip on the start screen and a line on the card): a weapon
+  (knife/spear/axe/sword/bow: ×1.6 strength while holding it), fists (+4
+  strength unarmed), survival (hunger and thirst ×0.75), stealth (seen at
+  70% distance, hides 3× as often), speed (×1.2 speed, ×1.3 escape) or
+  tracking (senses unseen tributes twice as far, chases 1.5× longer). On
+  reaching an exploring destination a tribute sometimes chills for 6–18 s
+  (`CHILLING`, 35%). Camera: rewritten around a "subject" (fight, mutt,
+  chase, pair); it stays on one for at least 3 s unless it is over
+  (`CAMERA_SWITCH_COOLDOWN_SECONDS`). The bloodbath is shown at zoom 1.3.
 
 All planned features, including the post-run summary (the debrief), are
 implemented.

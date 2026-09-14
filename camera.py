@@ -7,9 +7,15 @@ from ai import HUNTING, SEARCHING
 from config import (
     WORLD_WIDTH, WORLD_HEIGHT, FPS, CAMERA_FIGHT_LINGER_SECONDS,
     CAMERA_MAX_ZOOM, CAMERA_OPENING_ZOOM, CAMERA_CHASE_ZOOM, CAMERA_FIGHT_ZOOM,
-    CAMERA_SMOOTHING, CAMERA_PAN_SPEED, CAMERA_ZOOM_STEP,
+    CAMERA_SMOOTHING, CAMERA_PAN_SPEED, CAMERA_ZOOM_STEP, CAMERA_MUTT_RADIUS,
+    CAMERA_SWITCH_COOLDOWN_SECONDS,
 )
 from utils import distance
+
+
+def is_chasing(player):
+    return (player.alive and player.state in (HUNTING, SEARCHING)
+            and player.prey is not None and player.prey.alive)
 
 
 class Camera:
@@ -19,9 +25,12 @@ class Camera:
         self.zoom = zoom        # screen pixels per world pixel (2 = everything twice as big)
         self.auto = True        # True: the camera follows the action by itself
         self.dragging = False   # True while the left mouse button drags the view
-        self.focus = None       # the hunter whose chase the automatic camera is following
-        self.fight = None       # the fight the automatic camera is watching
-        self.linger_frames = 0  # frames left to stay on that fight's spot after it ends
+        # What the automatic camera is showing, as a tuple:
+        # ("fight", fight), ("mutt", mutt, player), ("chase", hunter), ("pair", a, b), or None
+        self.subject = None
+        self.switch_timer = 0   # frames before it may switch to something else
+        self.linger_frames = 0  # frames left to stay on a fight's spot after it ends
+        self.watched = []       # the tributes the automatic camera is showing (their cards are shown)
 
     # --- Converting between world and screen coordinates ----------------
 
@@ -103,56 +112,114 @@ class Camera:
             # Move a small share of the remaining distance each frame: fast
             # when far away, gentle when close. Fights are short, so get there
             # twice as quickly.
-            smoothing = CAMERA_SMOOTHING * 2 if self.fight is not None else CAMERA_SMOOTHING
+            on_fight = self.subject is not None and self.subject[0] == "fight"
+            smoothing = CAMERA_SMOOTHING * 2 if on_fight else CAMERA_SMOOTHING
             self.x += (target_x - self.x) * smoothing
             self.y += (target_y - self.y) * smoothing
             self.zoom += (target_zoom - self.zoom) * smoothing
         self.clamp(screen)
 
     def choose_focus(self, sim, screen):
-        """Where the automatic camera wants to look, and how zoomed in:
-        1. the cornucopia during the countdown and the bloodbath
-        2. a fight, zoomed in, until it is decided and a moment after, even if
-           another fight starts meanwhile (the camera picks the fight closest
-           to where it looks now)
-        3. a chase: a hunter and the player it is after, framed together.
-           The camera sticks with one hunter while its chase lasts; when it
-           needs a new one, it picks the chase closest to where it looks now.
-        4. otherwise the two players closest to each other (usually the next
-           encounter), zoomed in on them"""
+        """Where the automatic camera wants to look, and how zoomed in.
+        During the countdown and bloodbath it shows the whole cornucopia area.
+        Afterwards it picks the most interesting thing (see best_subject), but
+        once it shows something it stays on it for at least
+        CAMERA_SWITCH_COOLDOWN_SECONDS, unless that is over, so the view
+        doesn't jump around. It also remembers whom it shows (self.watched)."""
         arena = sim.arena
+        self.watched = []
         if not sim.opening_over:
             return arena.center_x, arena.center_y, CAMERA_OPENING_ZOOM
-
-        if self.fight is not None and self.fight not in arena.fights:
-            # The fight being watched is over: stay on its spot a moment longer
-            if self.linger_frames > 0:
-                self.linger_frames -= 1
-                return self.fight.x, self.fight.y, CAMERA_FIGHT_ZOOM
-            self.fight = None
-        if self.fight is None:
-            self.fight = min(arena.fights, default=None,
-                             key=lambda fight: distance(fight.x, fight.y, self.x, self.y))
-            self.linger_frames = int(CAMERA_FIGHT_LINGER_SECONDS * FPS)
-        if self.fight is not None:
-            return self.fight.x, self.fight.y, CAMERA_FIGHT_ZOOM
         if not sim.players:
             return self.x, self.y, self.zoom
 
-        def is_chasing(player):
-            return (player.alive and player.state in (HUNTING, SEARCHING)
-                    and player.prey is not None and player.prey.alive)
+        if self.switch_timer > 0:
+            self.switch_timer -= 1
+        if self.subject is not None and self.subject[0] == "fight" and self.subject[1] not in arena.fights:
+            self.linger_frames -= 1  # the fight is decided: stay on its spot a moment longer
 
-        if self.focus is None or not is_chasing(self.focus):
-            hunters = [player for player in sim.players if is_chasing(player)]
-            self.focus = min(hunters, default=None,
-                             key=lambda hunter: distance(hunter.x, hunter.y, self.x, self.y))
-        if self.focus is not None:
-            return self.frame([self.focus, self.focus.prey], screen)
+        best = self.best_subject(sim)
+        current_ok = self.still_on(self.subject, sim)
+        if best != self.subject and (self.switch_timer == 0 or not current_ok):
+            self.subject = best
+            self.switch_timer = int(CAMERA_SWITCH_COOLDOWN_SECONDS * FPS)
+            if best is not None and best[0] == "fight":
+                self.linger_frames = int(CAMERA_FIGHT_LINGER_SECONDS * FPS)
+        return self.show(self.subject, sim, screen)
+
+    def best_subject(self, sim):
+        """The most interesting thing to show right now:
+        1. the fight being watched, until it is decided (and a moment after)
+        2. another fight (the one closest to the view)
+        3. a mutt close to a tribute
+        4. a chase (the same hunter while its chase lasts)
+        5. the two non-allied tributes closest to each other"""
+        arena = sim.arena
+        if self.subject is not None and self.subject[0] == "fight" and self.still_on(self.subject, sim):
+            return self.subject
+        if arena.fights:
+            fight = min(arena.fights, key=lambda fight: distance(fight.x, fight.y, self.x, self.y))
+            return ("fight", fight)
+
+        encounters = [(distance(mutt.x, mutt.y, player.x, player.y), mutt, player)
+                      for mutt in sim.gamemakers.mutts for player in sim.players]
+        if encounters:
+            gap, mutt, player = min(encounters, key=lambda encounter: encounter[0])
+            if gap <= CAMERA_MUTT_RADIUS:
+                return ("mutt", mutt, player)
+
+        if self.subject is not None and self.subject[0] == "chase" and is_chasing(self.subject[1]):
+            return self.subject
+        hunters = [player for player in sim.players if is_chasing(player)]
+        if hunters:
+            hunter = min(hunters, key=lambda hunter: distance(hunter.x, hunter.y, self.x, self.y))
+            return ("chase", hunter)
+
         pair = self.closest_pair(sim.players)
         if pair is not None:
-            return self.frame(list(pair), screen)
-        return self.frame(sim.players, screen)
+            first, second = sorted(pair, key=lambda player: player.id)  # same pair = same tuple
+            return ("pair", first, second)
+        return None
+
+    def still_on(self, subject, sim):
+        """True if what `subject` shows is still going on."""
+        if subject is None:
+            return False
+        kind = subject[0]
+        if kind == "fight":
+            return subject[1] in sim.arena.fights or self.linger_frames > 0
+        if kind == "mutt":
+            _, mutt, player = subject
+            return mutt in sim.gamemakers.mutts and player.alive and \
+                distance(mutt.x, mutt.y, player.x, player.y) <= CAMERA_MUTT_RADIUS * 1.5
+        if kind == "chase":
+            return is_chasing(subject[1])
+        _, first, second = subject  # a pair
+        return first.alive and second.alive
+
+    def show(self, subject, sim, screen):
+        """The view (x, y, zoom) for a subject, and whom it shows."""
+        if subject is None:
+            return self.frame(sim.players, screen)
+        kind = subject[0]
+        if kind == "fight":
+            fight = subject[1]
+            self.watched = [fight.attacker, fight.defender]
+            return fight.x, fight.y, CAMERA_FIGHT_ZOOM
+        if kind == "mutt":
+            _, mutt, player = subject
+            self.watched = [player]
+            return self.frame([mutt, player], screen)
+        if kind == "chase":
+            hunter = subject[1]
+            if hunter.prey is None:
+                self.watched = [hunter]
+                return self.frame([hunter], screen)
+            self.watched = [hunter, hunter.prey]
+            return self.frame([hunter, hunter.prey], screen)
+        _, first, second = subject
+        self.watched = [first, second]
+        return self.frame([first, second], screen)
 
     def closest_pair(self, players):
         """The two players nearest to each other, or None if there are fewer
@@ -169,8 +236,9 @@ class Camera:
         return best
 
     def frame(self, players, screen):
-        """Center on a group of players, zoomed so they all fit with some
-        space around them (but never closer than CAMERA_CHASE_ZOOM)."""
+        """Center on a group of players (or anything with x and y), zoomed so
+        they all fit with some space around them (but never closer than
+        CAMERA_CHASE_ZOOM)."""
         xs = [player.x for player in players]
         ys = [player.y for player in players]
         margin = 150  # world pixels of space around the outermost players

@@ -18,8 +18,9 @@ from config import (
     SPRINT_SECONDS, STAMINA_RECOVERY_SECONDS, NAME_MIN_ZOOM, NAME_TEXT_COLOR,
     TERRAIN_SPEED, SAND_THIRST_FACTOR, MARSH_REFILL_SECONDS,
     WEAPON_ICON_COLOR, SLEEP_ICON_COLOR,
+    PROFICIENCIES, PROFICIENT_WEAPON_FACTOR, FISTS_BONUS, SURVIVAL_NEED_FACTOR, SPEED_PROFICIENCY_FACTOR,
     DISTRICT_SKILLS, WEAPON_TYPES, SKILL_WEAPON_BONUS, COMBAT_RANGE,
-    INJURY_SPEED_FACTOR, INJURY_STRENGTH_FACTOR, FORAGE_CHANCE, INJURY_COLOR,
+    INJURY_SPEED_FACTOR, INJURY_STRENGTH_FACTOR, FORAGE_CHANCE, INJURY_COLOR, FOLLOW_CATCHUP_MULTIPLIER,
 )
 from ai import RESTING, HUNTING, AVOIDING, FOLLOWING, STATE_COLORS
 from utils import distance, angle_to, angle_difference
@@ -80,6 +81,8 @@ class Player:
         # Aggression (0 = very cautious, 1 = very aggressive) fits the temperament
         low, high = AGGRESSION_RANGES[self.temperament]
         self.aggression = random.uniform(low, high)
+        # What it is especially good at: a weapon, fists, survival, stealth, speed or tracking
+        self.proficiency = random.choice(PROFICIENCIES)
         self.state = None           # what the player is doing, e.g. "RESTING"
         self.state_timer = 0        # frames spent in the current state
         self.target = None          # (x, y) to head for, or None to stand still
@@ -138,6 +141,10 @@ class Player:
             total += WEAPON_TYPES.get(self.weapon_type, (WEAPON_STRENGTH_BONUS, 0))[0]
             if (self.skill, self.weapon_type) in (("axes", "axe"), ("archery", "bow")):
                 total += SKILL_WEAPON_BONUS
+            if self.proficiency == self.weapon_type:
+                total *= PROFICIENT_WEAPON_FACTOR  # a master of this weapon
+        elif self.proficiency == "fists":
+            total += FISTS_BONUS  # a brawler doesn't need a weapon
         if self.skill == "training":
             total += 2
         if self.injury_timer > 0:
@@ -166,6 +173,8 @@ class Player:
             if leader is not self:
                 if self.state == FOLLOWING:
                     multiplier = max(multiplier, STATE_SPEED_MULTIPLIERS.get(leader.state, 1.0))
+                    if distance(self.x, self.y, leader.x, leader.y) > FOLLOW_LEASH:
+                        multiplier *= FOLLOW_CATCHUP_MULTIPLIER  # fallen behind: hurry back to the group
             else:
                 members = self.alliance.members
                 speed = min(member.speed for member in members)
@@ -178,6 +187,8 @@ class Player:
             multiplier = min(multiplier, 1.0)  # exhausted: no sprinting
         if self.injury_timer > 0:
             multiplier *= INJURY_SPEED_FACTOR
+        if self.proficiency == "speed":
+            multiplier *= SPEED_PROFICIENCY_FACTOR
         return speed * multiplier * TERRAIN_SPEED.get(self.terrain, 1.0)
 
     def move(self):
@@ -247,6 +258,8 @@ class Player:
                 self.needs[name] = min(NEED_MAX, self.needs[name] + MARSH_REFILL_RATE)
                 continue  # marsh water: thirst goes up instead of down
             rate = self.decay_rates[name]
+            if name != "sleep" and self.proficiency == "survival":
+                rate *= SURVIVAL_NEED_FACTOR  # knows how to live off the land
             if name == "thirst" and self.terrain == "sand":
                 rate *= SAND_THIRST_FACTOR  # hot, open sand makes players thirsty faster
             self.needs[name] -= rate
@@ -295,7 +308,10 @@ class Player:
             # Hiding up a tree: only a faint outline shows where it is
             pygame.draw.circle(screen, color, center, radius, 1)
         else:
+            # A soft shadow, the dot, and a thin dark outline so it stands out on any terrain
+            pygame.draw.circle(screen, (10, 12, 10), (center[0] + 1, center[1] + 2), radius + 1)
             pygame.draw.circle(screen, color, center, radius)
+            pygame.draw.circle(screen, (20, 22, 26), center, radius + 1, 1)
         if self.injury_timer > 0:
             # Injured: a small red cross on the dot
             arm = max(1, radius - 1)
@@ -314,7 +330,11 @@ class Player:
         # The name, small, above the warning dots (hidden when zoomed far out)
         if camera.zoom >= NAME_MIN_ZOOM:
             if self.name_label is None:
-                self.name_label = name_font.render(f"{self.name} ({self.district})", True, NAME_TEXT_COLOR)
+                # The name on a small see-through dark label, made once and reused
+                text = name_font.render(f"{self.name} ({self.district})", True, NAME_TEXT_COLOR)
+                self.name_label = pygame.Surface((text.get_width() + 8, text.get_height() + 2), pygame.SRCALPHA)
+                pygame.draw.rect(self.name_label, (0, 0, 0, 130), self.name_label.get_rect(), border_radius=4)
+                self.name_label.blit(text, (4, 1))
             above_dots = center[1] - radius - camera.size(WARNING_DOT_OFFSET_Y, 2) \
                 - camera.size(WARNING_DOT_RADIUS, 1) - 2
             screen.blit(self.name_label, self.name_label.get_rect(midbottom=(center[0], above_dots)))

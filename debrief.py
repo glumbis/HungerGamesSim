@@ -1,21 +1,20 @@
-"""The debrief, shown when the Games are over: the winner, some numbers and
-awards, a chart of how many tributes were alive over time, the final
-standings, and a scrollable list of everything that happened. Click a
-tribute in the standings to see only that tribute's story."""
+"""The debrief, shown when the Games are over. It has three tabs, so nothing
+has to share the screen:
+- Summary: the winner, key numbers, awards and a chart of tributes alive
+- Standings: every tribute's place, kills and fate (click one for its story)
+- Story: everything that happened (or only the chosen tribute's events)"""
 from collections import Counter
 
 import pygame
 
 import alliances
 import events
-from config import (
-    FPS, HUD_TEXT_COLOR, START_BACKGROUND, START_TITLE_COLOR, START_FIELD_COLOR,
-    EVENT_COLORS, FIRE_COLOR,
-)
+import ui
+from config import FPS, EVENT_COLORS, FIRE_COLOR
 
-ROW_HEIGHT = 17     # screen pixels per standings row
-EVENT_ROW_HEIGHT = 18
-CHART_HEIGHT = 110
+TABS = ["Summary", "Standings", "Story"]
+ROW_HEIGHT = 22
+EVENT_ROW_HEIGHT = 21
 
 
 def clock_text(frames):
@@ -50,107 +49,148 @@ def fate(player):
     return causes.get(player.cause_of_death, f"died of {player.cause_of_death}")
 
 
-def stats_lines(sim):
-    """A few numbers about the Games."""
+def stats(sim):
+    """Key numbers about the Games, as (label, value) pairs."""
     fallen = [player for player in sim.all_players if not player.alive]
     causes = Counter(player.cause_of_death for player in fallen)  # counts each cause
-    gamemaker_deaths = causes["mutts"] + causes["fire"] + causes["flood"] + causes["arena"]
+    gamemakers = causes["mutts"] + causes["fire"] + causes["flood"] + causes["arena"]
     return [
-        f"Length: {clock_text(sim.frames_since_start)} ({sim.gamemakers.day} days)",
-        f"Seed: {sim.seed}",
-        f"Fights: {sim.arena.fights_started}",
-        f"Fell in the bloodbath: {sim.bloodbath_deaths}",
-        f"Killed in combat: {causes['combat']}",
-        f"Hunger / thirst / sleep: {causes['hunger']} / {causes['thirst']} / {causes['sleep']}",
-        f"Killed by the Gamemakers: {gamemaker_deaths}",
-        f"Sponsor gifts: {events.counts['sponsor gifts']}",
-        f"Alliances formed: {events.counts['alliances formed']}",
-        f"Betrayals: {events.counts['betrayals']}",
+        ("Length", f"{clock_text(sim.frames_since_start)}  ({sim.gamemakers.day} days)"),
+        ("Fights", str(sim.arena.fights_started)),
+        ("Bloodbath deaths", str(sim.bloodbath_deaths)),
+        ("Killed in combat", str(causes["combat"])),
+        ("Hunger / thirst / sleep", f"{causes['hunger']} / {causes['thirst']} / {causes['sleep']}"),
+        ("Killed by Gamemakers", str(gamemakers)),
+        ("Sponsor gifts", str(events.counts["sponsor gifts"])),
+        ("Alliances / betrayals", f"{events.counts['alliances formed']} / {events.counts['betrayals']}"),
+        ("Seed", str(sim.seed)),
     ]
 
 
-def award_lines(sim):
-    """Awards for memorable tributes (each only if someone earned it)."""
+def awards(sim):
+    """Awards for memorable tributes, as (title, who) pairs (only if earned)."""
     everyone = sim.all_players
-    awards = []
+    result = []
     top_killer = max(everyone, key=lambda player: player.kills)
     if top_killer.kills > 0:
-        awards.append(f"Most kills: {top_killer.name} ({top_killer.kills})")
+        result.append(("Most kills", f"{top_killer.name} ({top_killer.kills})"))
     peaceful = [player for player in everyone if player.kills == 0]
     if peaceful:
-        # lowest placement number = lasted longest
-        best = min(peaceful, key=lambda player: player.placement or 99)
-        awards.append(f"Survived longest without a kill: {best.name} (place {best.placement})")
+        best = min(peaceful, key=lambda player: player.placement or 99)  # lowest place = lasted longest
+        result.append(("Survivor without a kill", f"{best.name} (place {best.placement})"))
     gifted = max(everyone, key=lambda player: getattr(player, "gifts", 0))
     if getattr(gifted, "gifts", 0) > 0:
-        awards.append(f"Sponsors' favorite: {gifted.name} ({gifted.gifts} gift(s))")
+        gift_word = "gift" if gifted.gifts == 1 else "gifts"
+        result.append(("Sponsors' favorite", f"{gifted.name} ({gifted.gifts} {gift_word})"))
     traitor = max(everyone, key=lambda player: getattr(player, "betrayals", 0))
     if getattr(traitor, "betrayals", 0) > 0:
-        awards.append(f"Biggest traitor: {traitor.name}")
+        result.append(("Biggest traitor", traitor.name))
     if alliances.records:
         name, size = max(alliances.records.items(), key=lambda item: item[1])
-        awards.append(f"Biggest alliance: {name} ({size} members)")
-    return awards
+        result.append(("Biggest alliance", f"{name} ({size})"))
+    return result
 
 
-def draw_chart(screen, small, sim, rect):
-    """Tributes alive over time as a line, with the bloodbath and the finale marked."""
-    pygame.draw.rect(screen, START_FIELD_COLOR, rect, border_radius=6)
-    screen.blit(small.render("Tributes alive over time", True, START_TITLE_COLOR), (rect.x + 8, rect.y + 5))
+def draw_chart(screen, sim, rect):
+    """Tributes alive over time as a line, with the bloodbath and finale marked."""
+    ui.panel(screen, rect)
+    ui.text(screen, "Tributes alive over time", ui.font(15, bold=True), ui.ACCENT, (rect.x + 14, rect.y + 10))
     history = sim.alive_history
     if len(history) < 2:
         return
+    small = ui.font(12)
     top = max(history)
-    inner = rect.inflate(-24, -34)
-    inner.y = rect.y + 24
+    inner = pygame.Rect(rect.x + 44, rect.y + 42, rect.width - 64, rect.height - 72)
 
     def point(second, alive):
         return (inner.x + inner.width * second / (len(history) - 1),
                 inner.bottom - inner.height * alive / top)
 
-    for frame, label in ((sim.bloodbath_end_frame, "bloodbath"), (sim.finale_frame, "finale")):
+    # Grid lines and labels every 6 tributes
+    for alive in range(0, top + 1, 6):
+        y = point(0, alive)[1]
+        pygame.draw.line(screen, ui.PANEL_LIGHT, (inner.x, y), (inner.right, y), 1)
+        ui.text(screen, str(alive), small, ui.MUTED, (inner.x - 8, y), "midright")
+    for frame, label in ((sim.bloodbath_end_frame, "bloodbath over"), (sim.finale_frame, "finale")):
         if frame is not None:
             x = point(min(frame // FPS, len(history) - 1), 0)[0]
             pygame.draw.line(screen, FIRE_COLOR, (x, inner.y), (x, inner.bottom), 1)
-            screen.blit(small.render(label, True, FIRE_COLOR), (x + 3, inner.y))
-    pygame.draw.lines(screen, START_TITLE_COLOR, False,
-                      [point(second, alive) for second, alive in enumerate(history)], 2)
-    screen.blit(small.render(str(top), True, HUD_TEXT_COLOR), (rect.x + 4, inner.y - 6))
-    screen.blit(small.render(clock_text(sim.frames_since_start), True, HUD_TEXT_COLOR),
-                (inner.right - 30, rect.bottom - 16))
+            ui.text(screen, label, small, FIRE_COLOR, (x + 4, inner.y))
+    pygame.draw.lines(screen, ui.ACCENT, False, [point(second, alive) for second, alive in enumerate(history)], 2)
+    ui.text(screen, "0:00", small, ui.MUTED, (inner.x, inner.bottom + 6))
+    ui.text(screen, clock_text(sim.frames_since_start), small, ui.MUTED, (inner.right, inner.bottom + 6), "topright")
+
+
+def draw_summary(screen, sim, area):
+    """Numbers and awards side by side on top, the chart below."""
+    half = (area.width - 16) // 2
+    numbers = pygame.Rect(area.x, area.y, half, 250)
+    prizes = pygame.Rect(area.x + half + 16, area.y, half, 250)
+    for box, title, rows in ((numbers, "The Games in numbers", stats(sim)), (prizes, "Awards", awards(sim))):
+        ui.panel(screen, box)
+        ui.text(screen, title, ui.font(15, bold=True), ui.ACCENT, (box.x + 14, box.y + 10))
+        for i, (label, value) in enumerate(rows):
+            y = box.y + 42 + i * 22
+            ui.text(screen, label, ui.font(14), ui.MUTED, (box.x + 14, y))
+            ui.text(screen, ui.fit(value, ui.font(14, bold=True), box.width // 2 - 10), ui.font(14, bold=True),
+                    ui.TEXT, (box.right - 14, y), "topright")
+    chart = pygame.Rect(area.x, area.y + 266, area.width, area.height - 266)
+    draw_chart(screen, sim, chart)
+
+
+def draw_standings(screen, standings, area, focus, mouse):
+    """The standings table. Returns the clickable row rectangles."""
+    ui.panel(screen, area)
+    columns = [("#", 0.03), ("Tribute", 0.08), ("District", 0.30), ("Kills", 0.41), ("Fate", 0.50), ("Time", 0.90)]
+    header_font, row_font = ui.font(13, bold=True), ui.font(14)
+    for heading, share in columns:
+        ui.text(screen, heading, header_font, ui.ACCENT, (area.x + area.width * share, area.y + 12))
+    row_height = min(ROW_HEIGHT, (area.height - 44) // len(standings))
+    rows = []
+    for i, player in enumerate(standings):
+        y = area.y + 36 + i * row_height
+        rect = pygame.Rect(area.x + 6, y, area.width - 12, row_height)
+        rows.append((rect, player))
+        if player is focus:
+            pygame.draw.rect(screen, ui.PANEL_HOVER, rect, border_radius=4)
+        elif rect.collidepoint(mouse):
+            pygame.draw.rect(screen, ui.PANEL_LIGHT, rect, border_radius=4)
+        color = ui.ACCENT if player.alive else ui.TEXT
+        time = "-" if player.death_frame is None else clock_text(player.death_frame)
+        cells = [str(player.placement), player.name, str(player.district), str(player.kills), fate(player), time]
+        for (_, share), text in zip(columns, cells):
+            x = area.x + area.width * share
+            ui.text(screen, ui.fit(text, row_font, area.width * 0.38), row_font, color, (x, rect.centery), "midleft")
+    return rows
 
 
 def run_debrief(screen, clock, sim):
     """Show the debrief until the viewer chooses what to do next.
     Returns "again" for new Games, "replay" for the same Games again, or "quit"."""
-    title_font = pygame.font.Font(None, 46)
-    font = pygame.font.Font(None, 22)
-    small = pygame.font.Font(None, 19)
     winner = sim.players[0] if sim.players else None
     # Winner first, then by placement; players who fell together share a place
     standings = sorted(sim.all_players, key=lambda player: (player.placement, player.id))
-    scroll = 0         # how many event lines are scrolled past
-    focus = None       # the tribute whose story is shown (None = everything)
-    row_rects = []     # clickable rectangles of the standings rows
+    tab = 0          # which tab is open
+    scroll = 0       # how many story lines are scrolled past
+    focus = None     # the tribute whose story is shown (None = everything)
+    rows = []        # clickable standings rows
+    tab_rects = []
 
     while True:
         width, height = screen.get_size()
-        info = stats_lines(sim) + award_lines(sim)
-        stats_rows = (len(info) + 1) // 2
-        events_left = width // 2 + 20
-        events_width = width - events_left - 20
-        events_top = 90 + CHART_HEIGHT + 10
+        mouse = pygame.mouse.get_pos()
+        area = pygame.Rect(24, 150, width - 48, height - 150 - 56)
 
-        # The events to show (only the focused tribute's, if one is chosen),
-        # wrapped to fit, each line keeping the color of its event
-        event_lines = []
+        # The story lines (only the focused tribute's, if one is chosen)
+        story_font = ui.font(14)
+        story = []
         for text, kind in zip(events.history, events.history_kinds):
             if focus is not None and focus.name not in text:
                 continue
-            color = EVENT_COLORS.get(kind, HUD_TEXT_COLOR)
-            event_lines += [(line, color) for line in wrap(text, small, events_width)]
-        rows_shown = (height - events_top - 70) // EVENT_ROW_HEIGHT
-        max_scroll = max(0, len(event_lines) - rows_shown)
+            color = EVENT_COLORS.get(kind, ui.TEXT)
+            story += [(line, color) for line in wrap(text, story_font, area.width - 40)]
+        rows_shown = (area.height - 56) // EVENT_ROW_HEIGHT
+        max_scroll = max(0, len(story) - rows_shown)
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -158,10 +198,13 @@ def run_debrief(screen, clock, sim):
             if event.type == pygame.MOUSEWHEEL:
                 scroll -= event.y * 3  # wheel up (positive y) scrolls toward the start
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                for rect, player in row_rects:
+                for i, rect in enumerate(tab_rects):
                     if rect.collidepoint(event.pos):
-                        focus = None if focus is player else player  # click again to show everything
-                        scroll = 0
+                        tab = i
+                if TABS[tab] == "Standings":
+                    for rect, player in rows:
+                        if rect.collidepoint(event.pos):
+                            focus, tab, scroll = player, TABS.index("Story"), 0
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_RETURN:
                     return "again"
@@ -169,7 +212,13 @@ def run_debrief(screen, clock, sim):
                     return "replay"
                 if event.key == pygame.K_ESCAPE:
                     return "quit"
-                if event.key == pygame.K_UP:
+                if event.key in (pygame.K_1, pygame.K_2, pygame.K_3):
+                    tab = event.key - pygame.K_1
+                elif event.key == pygame.K_TAB:
+                    tab = (tab + 1) % len(TABS)
+                elif event.key == pygame.K_a:
+                    focus, scroll = None, 0  # show everyone's story again
+                elif event.key == pygame.K_UP:
                     scroll -= 1
                 elif event.key == pygame.K_DOWN:
                     scroll += 1
@@ -180,61 +229,41 @@ def run_debrief(screen, clock, sim):
         scroll = max(0, min(scroll, max_scroll))
 
         # --- Drawing ---
-        screen.fill(START_BACKGROUND)
+        screen.fill(ui.BACKGROUND)
         center_x = width // 2
         if winner is not None:
-            title = f"{winner.name} wins the Hunger Games!"
-            subtitle = (f"District {winner.district}  -  {winner.temperament}, {winner.roaming}  -  "
-                        f"{winner.kills} kill(s)")
+            title = f"{winner.name} wins the Hunger Games"
+            subtitle = f"District {winner.district}  -  {winner.temperament}, {winner.roaming}  -  {winner.kills} kill(s)"
         else:
-            title = "The Games end with no victor"
-            subtitle = "The last tributes fell at the same moment."
-        label = title_font.render(title, True, START_TITLE_COLOR)
-        screen.blit(label, label.get_rect(center=(center_x, 34)))
-        label = font.render(subtitle, True, HUD_TEXT_COLOR)
-        screen.blit(label, label.get_rect(center=(center_x, 66)))
+            title, subtitle = "No victor", "The last tributes fell at the same moment."
+        ui.text(screen, title, ui.font(30, bold=True), ui.ACCENT, (center_x, 44), "center")
+        ui.text(screen, subtitle, ui.font(15), ui.MUTED, (center_x, 78), "center")
 
-        # Left: numbers and awards in two columns, then the standings table
-        for i, line in enumerate(info):
-            column, row = i % 2, i // 2  # even lines on the left, odd lines on the right
-            screen.blit(small.render(line, True, HUD_TEXT_COLOR), (20 + column * 255, 92 + row * 19))
+        # Tabs
+        tab_rects = []
+        for i, name in enumerate(TABS):
+            rect = pygame.Rect(0, 0, 140, 34)
+            rect.center = (center_x + (i - 1) * 150, 122)
+            tab_rects.append(rect)
+            ui.button(screen, rect, f"{i + 1}  {name}", ui.font(14, bold=True),
+                      active=i == tab, hover=rect.collidepoint(mouse))
 
-        table_top = 100 + stats_rows * 19
-        columns = [("#", 20), ("Tribute", 45), ("Dist.", 165), ("Kills", 210), ("Fate", 255), ("Time", 440)]
-        for heading, x in columns:
-            screen.blit(small.render(heading, True, START_TITLE_COLOR), (x, table_top))
-        row_rects = []
-        row_height = min(ROW_HEIGHT, max(12, (height - table_top - 50) // len(standings)))
-        for i, player in enumerate(standings):
-            y = table_top + 18 + i * row_height
-            rect = pygame.Rect(15, y - 1, events_left - 40, row_height)
-            row_rects.append((rect, player))
-            if player is focus:
-                pygame.draw.rect(screen, START_FIELD_COLOR, rect)
-            color = START_TITLE_COLOR if player.alive else HUD_TEXT_COLOR
-            time = "-" if player.death_frame is None else clock_text(player.death_frame)
-            cells = [str(player.placement), player.name, str(player.district),
-                     str(player.kills), fate(player), time]
-            for (_, x), text in zip(columns, cells):
-                screen.blit(small.render(text, True, color), (x, y))
+        if TABS[tab] == "Summary":
+            draw_summary(screen, sim, area)
+        elif TABS[tab] == "Standings":
+            rows = draw_standings(screen, standings, area, focus, mouse)
+        else:
+            ui.panel(screen, area)
+            heading = f"{focus.name}'s story   (A: show everyone)" if focus else "Everything that happened"
+            ui.text(screen, heading, ui.font(15, bold=True), ui.ACCENT, (area.x + 16, area.y + 12))
+            for i, (line, color) in enumerate(story[scroll:scroll + rows_shown]):
+                ui.text(screen, line, story_font, color, (area.x + 20, area.y + 44 + i * EVENT_ROW_HEIGHT))
+            if max_scroll > 0:
+                position = f"{scroll + 1}-{min(scroll + rows_shown, len(story))} of {len(story)}"
+                ui.text(screen, position, ui.font(13), ui.MUTED, (area.right - 16, area.y + 14), "topright")
 
-        # Right: the chart, then everything that happened
-        draw_chart(screen, small, sim, pygame.Rect(events_left - 10, 90, events_width + 20, CHART_HEIGHT))
-        pygame.draw.rect(screen, START_FIELD_COLOR,
-                         (events_left - 10, events_top, events_width + 20, height - events_top - 40),
-                         border_radius=6)
-        heading = f"{focus.name}'s story" if focus else "What happened"
-        screen.blit(font.render(heading, True, START_TITLE_COLOR), (events_left, events_top + 8))
-        for i, (line, color) in enumerate(event_lines[scroll:scroll + rows_shown]):
-            screen.blit(small.render(line, True, color), (events_left, events_top + 34 + i * EVENT_ROW_HEIGHT))
-        if max_scroll > 0:
-            position = f"{scroll + 1}-{min(scroll + rows_shown, len(event_lines))} of {len(event_lines)}"
-            label = small.render(position, True, HUD_TEXT_COLOR)
-            screen.blit(label, (events_left + events_width - label.get_width(), events_top + 10))
-
-        hint = "Click a tribute: their story   Wheel: scroll   Enter: new Games   R: replay this seed   Esc: quit"
-        label = small.render(hint, True, HUD_TEXT_COLOR)
-        screen.blit(label, label.get_rect(center=(center_x, height - 18)))
+        hint = "1/2/3 or Tab: switch tabs   Wheel: scroll   Enter: new Games   R: replay this seed   Esc: quit"
+        ui.text(screen, hint, ui.font(13), ui.MUTED, (center_x, height - 26), "center")
 
         pygame.display.flip()
         clock.tick(FPS)

@@ -9,8 +9,10 @@ from config import (
     COUNTDOWN_SECONDS, COUNTDOWN_TEXT_COLOR, CORNUCOPIA_COLOR, CAMERA_OPENING_ZOOM,
     MINIMAP_WIDTH, MINIMAP_BORDER, LULL_SECONDS, TERRAIN_COLORS, WIN_BANNER_SECONDS,
     DEATH_MARK_SECONDS, PANEL_COLOR, PANEL_BORDER, SELECT_RING_COLOR, SKILL_DESCRIPTIONS,
-    NEED_WARNING_COLORS, FIRE_COLOR,
+    NEED_WARNING_COLORS, FIRE_COLOR, CARD_WIDTH,
+    AGGRESSION_RANGES, BIG_ALLIANCE_SIZE, LEAVE_DISTANCE, TIP_SECONDS, PROFICIENCY_DESCRIPTIONS,
 )
+from utils import angle_to
 from player import Player
 from arena import Arena
 from camera import Camera
@@ -22,16 +24,29 @@ import alliances
 import combat
 import events
 import narration
+import ui
 from utils import distance
 
 
-def create_starting_players(arena, names):
-    """One player on each launch plate around the cornucopia."""
+def create_starting_players(arena, names, settings=None):
+    """One player on each launch plate around the cornucopia. `settings`
+    (from the start screen) can fix a player's temperament, roaming style and
+    whether it ever allies; anything left on "random"/"auto" stays random."""
     players = [Player(player_id=i, x=x, y=y, name=names[i]) for i, (x, y) in enumerate(arena.plates)]
     # A few random players get the "no alliance" trait. randint includes both
     # ends; random.sample picks that many different players.
     for player in random.sample(players, random.randint(*LONERS_PER_GAME)):
         player.loner = True
+    for player, choice in zip(players, settings or []):  # zip stops at the shorter list
+        if choice["temperament"] != "random":
+            player.temperament = choice["temperament"]
+            player.aggression = random.uniform(*AGGRESSION_RANGES[player.temperament])
+        if choice["roaming"] != "random":
+            player.roaming = choice["roaming"]
+        if choice.get("proficiency", "random") != "random":  # .get: settings saved before this option existed
+            player.proficiency = choice["proficiency"]
+        if choice["allies"] == "never":
+            player.loner = True
     return players
 
 
@@ -41,7 +56,7 @@ class Simulation:
     the main loop can run it several times per frame (faster) or skip it
     (paused)."""
 
-    def __init__(self, names, seed=None):
+    def __init__(self, names, seed=None, settings=None):
         # The seed decides every random choice, so the same seed replays the
         # same Games (as long as the names and settings are the same)
         self.seed = seed if seed is not None else random.randrange(1_000_000)
@@ -50,7 +65,7 @@ class Simulation:
         alliances.records.clear()
         alliances.Alliance.created = 0
         self.arena = Arena()
-        self.players = create_starting_players(self.arena, names)
+        self.players = create_starting_players(self.arena, names, settings)
         self.all_players = list(self.players)  # everyone, including the fallen (for the debrief)
         for player in self.players:
             ai.set_state(player, ai.WAITING)
@@ -67,6 +82,7 @@ class Simulation:
         self.game_over = False
         self.alive_history = []     # tributes alive, once per second (for the debrief chart)
         self.bloodbath_end_frame = None
+        self.alliance_sent_away = False  # True once a big alliance has left the cornucopia
         self.finale_frame = None
 
         print(f"Seed {self.seed}. Tributes:")
@@ -124,6 +140,9 @@ class Simulation:
 
         # Remove dead members, replace dead leaders, handle betrayals
         alliances.update_alliances(self.players)
+        events.opening = not self.opening_over  # fewer symbols around the crowded cornucopia
+        if not self.opening_over:
+            self.send_big_alliance_away()
 
         # The bloodbath ends once nobody is rushing or fleeing any more, the
         # rush has had its full time, and no fight has been going on for a moment
@@ -155,6 +174,40 @@ class Simulation:
 
         # Living players pick up any loot they are touching
         self.arena.handle_pickups(self.players)
+
+    def send_big_alliance_away(self):
+        """If two or more big alliances are at the cornucopia during the
+        opening, the smallest of them leaves for the outer arena, so the big
+        groups don't all wipe each other out at the start. It won't camp in
+        the middle afterwards either."""
+        # Only once per game, and only after the groups have had a few seconds to form
+        if self.alliance_sent_away or self.frames_since_start < 5 * FPS:
+            return
+        center_x, center_y = self.arena.center_x, self.arena.center_y
+        big = {player.alliance for player in self.players
+               if player.alliance is not None and len(player.alliance.members) >= BIG_ALLIANCE_SIZE
+               and not player.alliance.roams}
+        if len(big) < 2:
+            return
+        leaving = min(big, key=lambda alliance: (len(alliance.members), alliance.name))
+        leaving.roams = True
+        self.alliance_sent_away = True
+        leader = leaving.leader
+        # Head out on the side of the arena the leader is already on
+        away = angle_to(center_x, center_y, leader.x, leader.y)
+        point = ai.clamp_to_arena(center_x + math.cos(away) * LEAVE_DISTANCE,
+                                  center_y + math.sin(away) * LEAVE_DISTANCE, 80)
+        for member in leaving.members:
+            if member.fight is not None:
+                continue  # can't leave in the middle of a fight
+            member.prey = None
+            ai.set_state(member, ai.FLEE_OUTWARD)  # nobody attacks them on the way out
+            member.target = ai.clamp_to_arena(point[0] + member.follow_offset[0],
+                                              point[1] + member.follow_offset[1], 80)
+        leader.tip_target = point  # and keep going once the flight is over
+        leader.tip_timer = TIP_SECONDS * FPS
+        events.log(narration.pick(narration.ALLIANCE_LEAVES, alliance=leaving.name,
+                                  leader=leader.name), "alliance")
 
     def record_death(self, player, remaining):
         """Standings, a cross where it fell, a name for the night sky and the event text."""
@@ -217,10 +270,13 @@ def draw_hud(screen, font, speed, paused, camera, sim):
         "Wheel / drag / WASD: camera   F: follow   C: whole map",
         "Click a tribute: details",
     ]
+    width = max(font.size(line)[0] for line in lines) + 20
+    ui.panel(screen, pygame.Rect(screen.get_width() - width - 6, 6, width, len(lines) * 18 + 8),
+             ui.PANEL, None, radius=6, alpha=170)
     for i, line in enumerate(lines):
-        text = font.render(line, True, HUD_TEXT_COLOR)
-        # Right-align: start the text its own width away from the right edge
-        screen.blit(text, (screen.get_width() - text.get_width() - 10, 8 + i * 18))
+        # Right-align: the text's right edge sits 16 px from the window's edge
+        ui.text(screen, line, font, ui.ACCENT if i == 0 else ui.TEXT,
+                (screen.get_width() - 16, 10 + i * 18), "topright")
 
 
 def draw_big_text(screen, font, text):
@@ -285,6 +341,7 @@ def inspector_lines(player):
         f"Status: {status}   State: {player.state}",
         f"Traits: {player.temperament}, {player.roaming}" +
         (f", {SKILL_DESCRIPTIONS[player.skill]}" if player.skill else ""),
+        f"Proficient: {PROFICIENCY_DESCRIPTIONS[player.proficiency]}",
         f"Aggression {player.aggression:.2f}   Strength {player.fighting_strength():.1f}"
         f"   Speed {player.speed:.2f}",
         f"Kills: {player.kills}   Weapon: {weapon}",
@@ -298,23 +355,69 @@ def inspector_lines(player):
     return lines
 
 
-def draw_inspector(screen, font, player):
-    """A panel (top left) about the selected tribute, with its needs as bars."""
-    lines = inspector_lines(player)
-    width = 330
-    height = 16 + len(lines) * 18 + 3 * 14 + 8
-    panel = pygame.Rect(10, 10, width, height)
-    pygame.draw.rect(screen, PANEL_COLOR, panel, border_radius=6)
-    pygame.draw.rect(screen, PANEL_BORDER, panel, 1, border_radius=6)
+def alliance_lines(alliance):
+    """The card text for an alliance: its name, style and every member."""
+    title = alliance.name[0].upper() + alliance.name[1:]  # "the Wolves" -> "The Wolves" (keeps the other capitals)
+    lines = [f"{title}  -  {len(alliance.members)} members",
+             f"Style: {alliance.style}   Leader: {alliance.leader.name}"]
+    for member in alliance.members:
+        weapon = member.weapon_type if member.inventory["weapon"] > 0 else "unarmed"
+        injured = ", injured" if member.injury_timer > 0 else ""
+        lines.append(f"  {member.name} (D{member.district}): str {member.fighting_strength():.1f}, "
+                     f"{weapon}, {member.kills} kill(s){injured}")
+    return lines
+
+
+def draw_card(screen, font, top, lines, player=None):
+    """A card at the top left, starting at height `top`: lines of text, plus
+    need bars if it is a tribute's card. Returns where the next card can start."""
+    width = CARD_WIDTH
+    bars = 3 * 14 if player is not None else 0
+    height = 16 + len(lines) * 18 + bars
+    panel = pygame.Rect(10, top, width, height)
+    ui.panel(screen, panel, ui.PANEL, ui.BORDER, radius=8, alpha=225)
     y = panel.y + 8
     for i, line in enumerate(lines):
-        screen.blit(font.render(line, True, PANEL_BORDER if i == 0 else HUD_TEXT_COLOR), (panel.x + 10, y))
+        if i == 0:
+            ui.text(screen, ui.fit(line, ui.font(14, bold=True), width - 20), ui.font(14, bold=True),
+                    ui.ACCENT, (panel.x + 10, y - 1))
+        else:
+            ui.text(screen, ui.fit(line, font, width - 20), font, ui.TEXT, (panel.x + 10, y))
         y += 18
-    for name, value in player.needs.items():
-        screen.blit(font.render(name, True, HUD_TEXT_COLOR), (panel.x + 10, y))
-        pygame.draw.rect(screen, (50, 50, 50), (panel.x + 70, y + 3, 240, 8))
-        pygame.draw.rect(screen, NEED_WARNING_COLORS[name], (panel.x + 70, y + 3, int(240 * value / 100), 8))
-        y += 14
+    if player is not None:
+        for name, value in player.needs.items():
+            ui.text(screen, name, font, ui.MUTED, (panel.x + 10, y - 2))
+            bar_width = width - 80
+            pygame.draw.rect(screen, (50, 50, 50), (panel.x + 70, y + 3, bar_width, 8))
+            pygame.draw.rect(screen, NEED_WARNING_COLORS[name],
+                             (panel.x + 70, y + 3, int(bar_width * value / 100), 8))
+            y += 14
+    return panel.bottom + 8
+
+
+def draw_cards(screen, font, camera, selected):
+    """The clicked tribute's card; otherwise cards for whoever the automatic
+    camera is showing. A tribute in an alliance is shown as its alliance's
+    card (so when alliances meet or fight, both alliances are shown). Only
+    living tributes get a card, so a card closes when its tribute dies."""
+    if selected is not None:
+        subjects = [selected]
+    elif camera.auto:
+        subjects = []
+        for player in camera.watched:
+            if not player.alive:
+                continue
+            subject = player.alliance if player.alliance is not None else player
+            if subject not in subjects:
+                subjects.append(subject)
+    else:
+        subjects = []
+    top = 10
+    for subject in subjects[:2]:  # at most two cards, so the view stays clear
+        if isinstance(subject, Player):
+            top = draw_card(screen, font, top, inspector_lines(subject), subject)
+        else:
+            top = draw_card(screen, font, top, alliance_lines(subject))
 
 
 def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None):
@@ -353,8 +456,8 @@ def draw(screen, fonts, sim, camera, debug, speed, paused, selected=None):
     events.draw(screen, font)
     draw_hud(screen, font, speed, paused, camera, sim)
     draw_minimap(screen, sim, camera)
-    if selected is not None:
-        draw_inspector(screen, font, selected)
+    if not debug:  # the debug legend uses the same corner
+        draw_cards(screen, font, camera, selected)
     pygame.display.flip()
 
 
@@ -370,18 +473,18 @@ def tribute_at(sim, camera, screen, position):
 
 # --- Running the Games -----------------------------------------------------
 
-def play(screen, clock, names, seed=None):
+def play(screen, clock, names, settings=None, seed=None):
     """Run one Games from the countdown until shortly after the winner is
     known. Returns the finished Simulation (for the debrief), or None if the
     window was closed."""
     fonts = (
-        pygame.font.Font(None, 20),   # HUD, legend and event feed (None = pygame's built-in font)
-        pygame.font.Font(None, 140),  # countdown
-        pygame.font.Font(None, 16),   # names above heads
-        pygame.font.Font(None, 80),   # winner banner
+        ui.font(13),              # HUD, legend, cards and event feed
+        ui.font(90, bold=True),   # countdown
+        ui.font(10, bold=True),   # names above heads
+        ui.font(52, bold=True),   # winner banner
     )
     events.reset()
-    sim = Simulation(names, seed)
+    sim = Simulation(names, seed, settings)
     camera = Camera(sim.arena.center_x, sim.arena.center_y, CAMERA_OPENING_ZOOM)
     debug = False
     paused = False
@@ -424,6 +527,8 @@ def play(screen, clock, names, seed=None):
                 sim.step()
                 step_budget -= 1
 
+        if selected is not None and not selected.alive:
+            selected = None  # the clicked tribute died: close its card
         camera.update(sim, screen)
         draw(screen, fonts, sim, camera, debug, speed, paused, selected)
         clock.tick(FPS)
@@ -442,14 +547,16 @@ def main():
     pygame.display.set_caption("Hunger Games Simulation")
     clock = pygame.time.Clock()
 
-    names = None  # the first start screen uses the default names
-    seed = None   # None = a new random seed
+    names = None     # the first start screen uses the default names...
+    settings = None  # ...and random traits
+    seed = None      # None = a new random seed
     while True:
         if seed is None:
-            names = run_start_screen(screen, clock, names)
-            if names is None:  # window closed on the start screen
+            result = run_start_screen(screen, clock, names, settings)
+            if result is None:  # window closed on the start screen
                 break
-        sim = play(screen, clock, names, seed)
+            names, settings = result
+        sim = play(screen, clock, names, settings, seed)
         if sim is None:    # window closed during the Games
             break
         choice = run_debrief(screen, clock, sim)

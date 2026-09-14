@@ -295,6 +295,13 @@ ALLIANCE_NAMED = [
     "Soon the whole of Panem knows them as {alliance}.",
 ]
 
+ALLIANCE_LEAVES = [
+    "Seeing another pack claim the horn, {leader} leads {alliance} away from the cornucopia.",
+    "Not wanting a war over the horn, {leader} takes {alliance} out into the arena.",
+    "Outnumbered at the cornucopia, {alliance} slip away under {leader}.",
+    "{leader} decides the cornucopia isn't worth dying for, and leads {alliance} into the wilds.",
+]
+
 SPONSOR_GIFT = [
     "A silver parachute drifts down to {name}: {item}!",
     "A sponsor sends {name} {item}. Someone out there is betting on them.",

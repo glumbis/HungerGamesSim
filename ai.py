@@ -22,8 +22,9 @@ from config import (
     SLEEP_COLLAPSE_THRESHOLD, AVOID_COMMIT_SECONDS, BLOODBATH_ALLIANCE_CHANCE,
     BLOODBATH_JOIN_CHANCE, CAMP_ALLIANCE_SIZE, CAMP_RADIUS, CENTER_PULL,
     LULL_GATHER_SHARE, GATHER_RADIUS, LULL_FIGHT_BONUS,
-    NIGHT_VISION_FACTOR, NIGHT_REST_BONUS, HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE,
-    HIDE_MAX_AGGRESSION, AMBUSH_CHANCE, AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
+    ALLIANCE_ASSIST_RADIUS, NIGHT_VISION_FACTOR, NIGHT_SLEEP_THRESHOLD,NIGHT_HUNT_MIN_FIGHT_CHANCE, NEED_MAX,HIDE_CHANCE, HIDE_SECONDS, HIDE_SPOT_DISTANCE,
+    STEALTH_VISIBILITY, TRACKING_FACTOR, CHILL_CHANCE, CHILL_SECONDS, CHILL_START_PER_SECOND,
+    HIDE_MAX_AGGRESSION, AMBUSH_CHANCE,AMBUSH_SECONDS, REVENGE_RADIUS, FEARED_KILLS, FEARED_FACTOR,
 )
 from utils import distance, angle_to
 
@@ -52,6 +53,7 @@ CONVERGING = "CONVERGING"       # finale: heading for the cornucopia
 DRINKING = "DRINKING"           # standing in marsh, drinking
 HIDING = "HIDING"               # up a tree in the forest, hard to spot
 AMBUSHING = "AMBUSHING"         # a killer lying in wait by water or supplies
+CHILLING = "CHILLING"           # nothing to do: staying put for a while
 
 # Dot color for each state in the debug view
 STATE_COLORS = {
@@ -74,6 +76,7 @@ STATE_COLORS = {
     DRINKING: (90, 220, 255),       # light blue
     HIDING: (60, 140, 60),          # dark green
     AMBUSHING: (150, 40, 40),       # dark red
+    CHILLING: (170, 190, 150),      # sage
 }
 
 # How a player reacts to another player it sees
@@ -192,22 +195,36 @@ def choose_explore_point(player, roaming=None, min_trip=EXPLORE_MIN_TRIP):
 def explore(player):
     """Walk to a part of the arena this player hasn't visited, pause on
     arrival to look around, then pick the next one."""
-    set_state(player, EXPLORING)
     if player.pause_timer > 0:
         player.pause_timer -= 1
-        player.target = None  # stand still while looking around
+        # A long pause is chilling (sitting down for a while), a short one looking around
+        set_state(player, CHILLING if player.state == CHILLING else EXPLORING)
+        player.target = None  # stand still
         return
+    if random.random() < CHILL_START_PER_SECOND / FPS:
+        # Nothing urgent to do: sometimes just sit down where it is for a while
+        set_state(player, CHILLING)
+        player.pause_timer = int(random.uniform(*CHILL_SECONDS) * FPS)
+        player.target = None
+        return
+    set_state(player, EXPLORING)
     if player.explore_point is not None and \
             distance(player.x, player.y, *player.explore_point) < ARRIVE_DISTANCE:
         player.explore_point = None
+        player.target = None
+        if random.random() < CHILL_CHANCE:
+            # No need to keep moving: stay here a while
+            set_state(player, CHILLING)
+            player.pause_timer = int(random.uniform(*CHILL_SECONDS) * FPS)
+            return
         pause = random.uniform(EXPLORE_PAUSE_MIN, EXPLORE_PAUSE_MAX)
         if player.roaming == "explorer":
             pause *= EXPLORER_PAUSE_FACTOR  # explorers don't linger
         player.pause_timer = int(pause * FPS)
-        player.target = None
         return
     if player.explore_point is None:
-        if player.alliance is not None and len(player.alliance.members) >= CAMP_ALLIANCE_SIZE:
+        if player.alliance is not None and len(player.alliance.members) >= CAMP_ALLIANCE_SIZE \
+                and not player.alliance.roams:
             player.explore_point = camp_point()
         else:
             player.explore_point = choose_explore_point(player)
@@ -326,6 +343,8 @@ def can_see(player, other, radius):
     otherwise, if either is on sand, it is 30% longer (open ground)."""
     factors = [TERRAIN_VISIBILITY.get(player.terrain, 1.0), TERRAIN_VISIBILITY.get(other.terrain, 1.0)]
     factor = min(factors) if min(factors) < 1 else max(factors)
+    if other.proficiency == "stealth":
+        factor *= STEALTH_VISIBILITY  # hard to spot
     return distance(player.x, player.y, other.x, other.y) <= radius * factor
 
 
@@ -369,7 +388,7 @@ def nearest(player, things):
     )
 
 
-def most_urgent_need(members, state):
+def most_urgent_need(members, state, night_hunter=False):
     """Return "sleep", "food", "water", or None if nothing needs doing.
     `state` is the deciding player's current state (resting or drinking
     players keep at it until they are refreshed).
@@ -383,8 +402,11 @@ def most_urgent_need(members, state):
     If several count, the one with the lowest value wins."""
     urgent = {}  # what is needed -> lowest value of that need in the group
     lowest_sleep = min(member.needs["sleep"] for member in members)
-    threshold = REST_THRESHOLD + (NIGHT_REST_BONUS if night else 0)  # tired sooner at night
-    if lowest_sleep < threshold or (state == RESTING and lowest_sleep < REST_UNTIL):
+    if night and not night_hunter:
+        # Night: those who aren't out hunting bed down early and sleep until dawn
+        if lowest_sleep < NIGHT_SLEEP_THRESHOLD or state == RESTING:
+            urgent["sleep"] = lowest_sleep
+    elif lowest_sleep < REST_THRESHOLD or (state == RESTING and lowest_sleep < REST_UNTIL):
         urgent["sleep"] = lowest_sleep
     for kind, need in LOOT_RESTORES.items():  # ("food", "hunger"), ("water", "thirst")
         lowest = min(member.needs[need] for member in members)
@@ -476,7 +498,8 @@ def hunt(player, visible_players):
         return False
 
     player.hunt_timer += 1
-    if player.hunt_timer > HUNT_GIVE_UP_SECONDS * FPS:
+    patience = HUNT_GIVE_UP_SECONDS * (1.5 if player.proficiency == "tracking" else 1)
+    if player.hunt_timer > patience * FPS:
         stop_hunting(player, cooldown=True)  # chased too long: give up
         return False
 
@@ -580,9 +603,10 @@ def track(leader, players):
     error) and re-estimates every few seconds. Returns True if tracking."""
     if fight_chance(leader) < TRACK_MIN_FIGHT_CHANCE:
         return False
+    reach = TRACK_RADIUS * (TRACKING_FACTOR if leader.proficiency == "tracking" else 1)
     candidates = [other for other in players
                   if other is not leader and other.alive and not is_ally(leader, other)
-                  and distance(leader.x, leader.y, other.x, other.y) <= TRACK_RADIUS]
+                  and distance(leader.x, leader.y, other.x, other.y) <= reach]
     quarry = nearest(leader, candidates)
     if quarry is None:
         return False
@@ -685,8 +709,9 @@ def try_to_hide(player):
         player.target = None
         return True
     hunted = any(other.prey is player for other in player.visible_players)
+    chance = HIDE_CHANCE * (3 if player.proficiency == "stealth" else 1)
     if hunted and player.terrain == "forest" and player.aggression <= HIDE_MAX_AGGRESSION \
-            and random.random() < HIDE_CHANCE:
+            and random.random() < chance:
         player.hide_timer = HIDE_SECONDS * FPS
         stop_hunting(player)
         for other in player.visible_players:
@@ -756,18 +781,44 @@ def narration_pick(list_name, **names):
     return narration.pick(getattr(narration, list_name), **names)
 
 
+def assist_allies(player):
+    """If an ally within ALLIANCE_ASSIST_RADIUS is locked in a fight, go for
+    its opponent: standing close to the fight adds this player's strength to
+    the ally's (see combat.effective_strength). Returns True if assisting."""
+    for ally in player.alliance.members:
+        fight = ally.fight
+        if ally is player or fight is None:
+            continue
+        opponent = fight.defender if fight.attacker is ally else fight.attacker
+        if opponent.alliance is player.alliance or not opponent.alive:
+            continue
+        if distance(player.x, player.y, fight.x, fight.y) > ALLIANCE_ASSIST_RADIUS:
+            continue
+        player.prey = opponent
+        player.prey_last_seen = (opponent.x, opponent.y)
+        player.hunt_timer = 0
+        set_state(player, HUNTING)
+        player.target = chase_target(player, opponent)
+        return True
+    return False
+
+
 def follow_leader(player):
     """Alliance members don't make their own plans: they join the leader's
     hunts, sleep when it sleeps, and otherwise stay close to it."""
     leader = player.alliance.leader
 
-    # Join the leader's hunt — only while the leader is actually chasing,
-    # not while the group is backing off or searching
-    if leader.state == HUNTING and leader.prey is not None and leader.prey.alive \
-            and leader.prey in player.visible_players:
+    # Join the leader's hunt while the leader is chasing or searching for its
+    # prey — even if this member can't see the prey itself, it trusts the
+    # leader and runs with the group
+    if leader.state in (HUNTING, SEARCHING) and leader.prey is not None and leader.prey.alive \
+            and distance(player.x, player.y, leader.x, leader.y) <= ALLIANCE_ASSIST_RADIUS:
         player.prey = leader.prey
         set_state(player, HUNTING)
-        player.target = chase_target(player, leader.prey)
+        if leader.prey in player.visible_players or leader.state == HUNTING:
+            player.target = chase_target(player, leader.prey)
+        else:
+            player.target = leader.prey_last_seen or (leader.x, leader.y)
         return
     player.prey = None
 
@@ -945,6 +996,11 @@ def decide(player, arena, players):
             player.target = point_away_from(player, opponent.x, opponent.y)
             return
 
+    # 2b. An alliance fights as one: if an ally is in a fight, everyone close
+    #     enough (leader included) joins in against the opponent
+    if player.alliance is not None and assist_allies(player):
+        return
+
     # 3. Alliance members follow their leader instead of deciding for themselves
     if is_member:
         follow_leader(player)
@@ -977,7 +1033,8 @@ def decide(player, arena, players):
         known_loot = player.known_loot
         members = [player]
 
-    need = most_urgent_need(members, player.state)
+    night_hunter = fight_chance(player) >= NIGHT_HUNT_MIN_FIGHT_CHANCE  # stays up at night to hunt
+    need = most_urgent_need(members, player.state, night_hunter)
     asleep = player.state == RESTING and need == "sleep"
     if need != "sleep":
         player.rest_spot = None  # not tired (any more): forget the sleeping spot
