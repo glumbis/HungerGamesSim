@@ -295,13 +295,6 @@ ALLIANCE_NAMED = [
     "Soon the whole of Panem knows them as {alliance}.",
 ]
 
-CAREERS_FORMED = [
-    "As expected, the Careers band together: {names}. {leader} leads the pack.",
-    "The tributes from the wealthy districts stand as one. The Careers are {names}, led by {leader}.",
-    "The Career pack is formed before the gong: {names}. {leader} gives the orders.",
-    "Trained for this their whole lives, {names} hunt as the Careers under {leader}.",
-]
-
 TRAINING_SCORES = [
     "Training scores are in. Highest: {best} with {best_score}. Lowest: {worst} with {worst_score}.",
     "Caesar Flickerman reads the training scores: {best} earns a {best_score}, {worst} only a {worst_score}.",

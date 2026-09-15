@@ -10,7 +10,7 @@ from config import (
     ALLIANCE_CHANCE, ALLIANCE_MAX_SIZE, ALLIANCE_MERGE_CHANCE, SAME_DISTRICT_ALLIANCE_CHANCE,
     ALLY_SHARE_RANGE, FOLLOW_SPREAD,
     BETRAYAL_CHANCE_PER_MINUTE, ALLIANCE_COLORS, ALLIANCE_WILLINGNESS, SHOWDOWN_PLAYERS,
-    ALLIANCE_NAMES, CAREER_DISTRICTS,
+    ALLIANCE_NAMES, CAREER_DISTRICTS, CAREER_ALLIANCE_BONUS,
 )
 from utils import distance
 
@@ -153,6 +153,15 @@ def try_to_ally(player, other, chance=None):
         same_district = any(member.district == newcomer.district for member in group.members)
     if same_district:
         chance = SAME_DISTRICT_ALLIANCE_CHANCE
+    # Like the books, tributes from the Career districts (1, 2 and 4) are a
+    # little likelier to team up with each other
+    if group is None:
+        careers = player.district in CAREER_DISTRICTS and other.district in CAREER_DISTRICTS
+    else:
+        careers = newcomer.district in CAREER_DISTRICTS and \
+            any(member.district in CAREER_DISTRICTS for member in group.members)
+    if careers:
+        chance = min(1.0, chance * CAREER_ALLIANCE_BONUS)
     if random.random() >= chance:
         return False
 
@@ -168,28 +177,6 @@ def try_to_ally(player, other, chance=None):
                                   leader=group.leader.name) + f" ({group.name})", "alliance")
         events.add_ring(newcomer.x, newcomer.y, group.color)
     return True
-
-
-def form_careers(players):
-    """Like the books: the tributes from the Career districts (1, 2 and 4)
-    who are willing to ally start the Games as one bloodthirsty pack, and
-    all of them rush the cornucopia. Returns the alliance, or None."""
-    careers = [player for player in players
-               if player.district in CAREER_DISTRICTS and not player.loner][:ALLIANCE_MAX_SIZE]
-    if len(careers) < 2:
-        return None
-    alliance = Alliance(careers[0], careers[1])  # founders from District 1: named "the Careers"
-    for player in careers[2:]:
-        alliance.add(player)
-    alliance.style = "bloodthirsty"
-    alliance.choose_new_leader()
-    for player in careers:
-        player.alliance_rolls.update(careers)  # they have already made their choice
-    events.counts["alliances formed"] += 1
-    events.log(narration.pick(narration.CAREERS_FORMED, names=alliance.names(),
-                              leader=alliance.leader.name), "alliance")
-    events.add_ring(alliance.leader.x, alliance.leader.y, alliance.color)
-    return alliance
 
 
 def try_to_merge(player, other):

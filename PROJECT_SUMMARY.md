@@ -85,9 +85,10 @@ this as a learning project (see "Working style").
    converges on the cornucopia to fight to the death.
 
 Before the gong, the Gamemakers announce the training scores (1–12, mostly
-strength; highest and lowest are logged), and the willing tributes from
-Districts 1, 2 and 4 form the Career pack (`alliances.form_careers`), a
-bloodthirsty alliance that rushes the horn together.
+strength; highest and lowest are logged). Tributes from Districts 1, 2 and 4
+are a little likelier to ally with each other (×1.4,
+`CAREER_ALLIANCE_BONUS`); an alliance founded by two of them is named "the
+Careers".
 
 ### Decision order (`ai.decide`, first match wins)
 0. locked in a fight → stand still; asleep and still within the minimum

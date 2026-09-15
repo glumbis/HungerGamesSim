@@ -116,11 +116,6 @@ class Simulation:
                                           worst=worst.name, worst_score=worst.training_score), "gamemaker")
                 for player in self.players:
                     ai.choose_opening_state(player, self.arena)
-                careers = alliances.form_careers(self.players)
-                if careers is not None:
-                    for member in careers.members:
-                        ai.set_state(member, ai.RUSH_LOOT)  # the Careers all go for the horn
-                        member.target = None
                 events.log(narration.pick(narration.GAMES_BEGIN), "gamemaker")
             return
         self.frames_since_start += 1
